@@ -9,7 +9,7 @@
 # Built by `just test-image`; KOPLUGIN_DEV_IMAGE is passed from the root
 # justfile's pin so a version bump changes exactly one assignment.
 
-ARG KOPLUGIN_DEV_IMAGE=ghcr.io/kaikozlov/koplugin-dev:v2026.07.1_1
+ARG KOPLUGIN_DEV_IMAGE=ghcr.io/kaikozlov/koplugin-dev:v2026.07.1_2
 FROM ${KOPLUGIN_DEV_IMAGE}
 
 RUN apt-get update && \
