@@ -11,6 +11,9 @@ local KindleLibrary = {}
 KindleLibrary.__index = KindleLibrary
 
 function KindleLibrary:new(virtual_library, cache_manager)
+    if virtual_library and cache_manager and not virtual_library.cache_manager then
+        virtual_library:setCacheManager(cache_manager)
+    end
     return setmetatable({
         virtual_library = virtual_library,
         cache_manager = cache_manager,

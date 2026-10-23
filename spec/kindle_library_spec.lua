@@ -555,7 +555,7 @@ describe("KindleLibrary native catalog controller", function()
                 end,
             },
         })
-        local buttons = fixture.library:fileDialogButtons(fixture.source_path, true)
+        local buttons = fixture.library:fileDialogButtons(fixture.convert_path, true)
         assert.equals(5, #buttons)
         assert.equals("Kindle information", buttons[1].text)
         assert.equals("Clear Kindle cache", buttons[2].text)
