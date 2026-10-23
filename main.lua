@@ -61,6 +61,9 @@ local default_settings = {
     sync_from_kindle_older = SYNC_DIRECTION.NEVER,
     sync_to_kindle_newer = SYNC_DIRECTION.SILENT,
     sync_to_kindle_older = SYNC_DIRECTION.NEVER,
+    sync_on_suspend = true,
+    create_missing_sidecar = true,
+    trigger_cloud_sync = true,
 }
 
 local helper_client = HelperClient:new()
@@ -175,6 +178,40 @@ local function configuredDirection(settings, is_pull_from_kindle, is_newer)
         return is_newer and settings.sync_from_kindle_newer or settings.sync_from_kindle_older
     end
     return is_newer and settings.sync_to_kindle_newer or settings.sync_to_kindle_older
+end
+
+local function flushLiveReaderPosition(ui)
+    if not ui or not ui.document or not ui.doc_settings then
+        return false
+    end
+    local ds = ui.doc_settings
+    local doc = ui.document
+    if type(doc.getXPointer) == "function" then
+        local ok, res = pcall(doc.getXPointer, doc)
+        if ok and type(res) == "string" and res ~= "" then
+            ds:saveSetting("last_xpointer", res)
+        end
+    end
+    local percent = nil
+    if ui.rolling and type(ui.rolling.getLastPercent) == "function" then
+        local ok, res = pcall(ui.rolling.getLastPercent, ui.rolling)
+        if ok and type(res) == "number" then
+            percent = res
+        end
+    elseif ui.paging and type(ui.paging.getLastPercent) == "function" then
+        local ok, res = pcall(ui.paging.getLastPercent, ui.paging)
+        if ok and type(res) == "number" then
+            percent = res
+        end
+    end
+    if percent then
+        ds:saveSetting("percent_finished", percent)
+        ds:saveSetting("last_percent", percent)
+    end
+    if type(ds.flush) == "function" then
+        ds:flush()
+    end
+    return true
 end
 
 local function applyPullToLiveReader(plugin, document, doc_settings, sync_fn)
@@ -379,6 +416,9 @@ function KindlePlugin:syncPendingClose()
     -- in-process KRDS write synchronously: scheduling beyond this boundary can
     -- let UIManager remove its last widget and discard the pending task.
     runPendingCloseSync(pending)
+    if self.settings.trigger_cloud_sync ~= false then
+        self:triggerKindleCloudSync()
+    end
 end
 
 --- CloseDocument happens before the final UIManager-driven SaveSettings in the
@@ -428,6 +468,54 @@ function KindlePlugin:onCloseWidget()
         self:capturePendingCloseSync()
     end
     self:syncPendingClose()
+end
+
+--- Triggers Kindle's background Whispersync service (com.lab126.todo)
+--- to immediately sync reading goals/progress to Amazon Cloud over Wi-Fi.
+function KindlePlugin:triggerKindleCloudSync()
+    if Device.isKindle ~= nil and Device:isKindle() == false then
+        return false, "not a Kindle device"
+    end
+    local lipc_path = "/usr/bin/lipc-set-prop"
+    local f = io.open(lipc_path, "rb")
+    if not f then
+        return false, "lipc binary not found"
+    end
+    f:close()
+    local cmd = util.shell_escape({ lipc_path, "com.lab126.todo", "scheduleTodo", "1" }) .. " >/dev/null 2>&1"
+    local ok = os.execute(cmd)
+    logger.info("KindlePlugin: triggered Kindle Cloud Whispersync via LIPC:", ok)
+    return true
+end
+
+--- Device sleep / suspend handler. Flushes live reader state and syncs to Kindle
+--- without closing the session, ensuring reading counts toward daily goals/insights
+--- even if the user leaves the book open and puts the device to sleep.
+function KindlePlugin:onSuspend()
+    if
+        not self.settings.sync_reading_state
+        or not reading_state_sync:isAutomaticSyncEnabled()
+        or self.settings.sync_on_suspend == false
+        or not self.ui
+        or not self.ui.document
+        or not self.ui.doc_settings
+        or not self._automatic_sync_open_session
+    then
+        return
+    end
+
+    logger.info("KindlePlugin: device suspending with open Kindle book; syncing progress to Kindle")
+    flushLiveReaderPosition(self.ui)
+    local session = self._automatic_sync_open_session
+    runPendingCloseSync({
+        cde_key = session.cde_key,
+        source_path = session.source_path,
+        doc_settings = self.ui.doc_settings,
+        epub_path = session.epub_path,
+    })
+    if self.settings.trigger_cloud_sync ~= false then
+        self:triggerKindleCloudSync()
+    end
 end
 
 --- Registers the "Kindle Library" dispatcher action so gestures, profiles,
@@ -771,6 +859,40 @@ function KindlePlugin:createSyncBehaviorMenuItem()
                 end,
                 separator = true,
             },
+            {
+                text = _("Automatic sync on device sleep (suspend)"),
+                checked_func = function()
+                    return self.settings.sync_on_suspend ~= false
+                end,
+                callback = function()
+                    self.settings.sync_on_suspend = self.settings.sync_on_suspend == false
+                    self:saveSettings()
+                end,
+            },
+            {
+                text = _("Trigger Kindle Cloud Sync after sync"),
+                help_text = _("Notifies Kindle's Whispersync service to sync reading goals and insights over Wi-Fi."),
+                checked_func = function()
+                    return self.settings.trigger_cloud_sync ~= false
+                end,
+                callback = function()
+                    self.settings.trigger_cloud_sync = self.settings.trigger_cloud_sync == false
+                    self:saveSettings()
+                end,
+            },
+            {
+                text = _("Trigger Kindle Cloud Sync now"),
+                help_text = _("Manually nudges Kindle's Whispersync service to connect to Amazon Cloud and update reading streaks."),
+                callback = function()
+                    local ok, err = self:triggerKindleCloudSync()
+                    if ok then
+                        self:showInfo(_("Kindle Cloud Sync triggered."), 2)
+                    else
+                        self:showInfo(_("Failed to trigger cloud sync:\n") .. (err or _("unknown error")), 3)
+                    end
+                end,
+                separator = true,
+            },
             self:createFromKindleSyncSettingsMenu(),
             self:createToKindleSyncSettingsMenu(),
         },
@@ -948,6 +1070,53 @@ function KindlePlugin:createBrowseLibraryMenuItem()
     }
 end
 
+--- Creates sync current book now menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createSyncCurrentBookMenuItem()
+    return {
+        text = _("Sync current book now"),
+        help_text = _("Pushes the current reading progress to Kindle without closing the book."),
+        enabled_func = function()
+            return self.settings.sync_reading_state == true and self.ui and self.ui.document and self._automatic_sync_open_session ~= nil
+        end,
+        callback = function()
+            if not (self.ui and self.ui.document and self._automatic_sync_open_session) then
+                self:showInfo(_("No Kindle book is currently open."))
+                return
+            end
+            flushLiveReaderPosition(self.ui)
+            local session = self._automatic_sync_open_session
+            runPendingCloseSync({
+                cde_key = session.cde_key,
+                source_path = session.source_path,
+                doc_settings = self.ui.doc_settings,
+                epub_path = session.epub_path,
+            })
+            if self.settings.trigger_cloud_sync ~= false then
+                self:triggerKindleCloudSync()
+            end
+            self:showInfo(_("Current reading progress synced to Kindle."), 3)
+        end,
+        separator = true,
+    }
+end
+
+--- Creates prepare all unprepared books menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createPrepareAllBooksMenuItem()
+    return {
+        text = _("Prepare all unprepared books"),
+        help_text = _("Converts all unprepared Kindle books in the background for fast opening. Close the current book first."),
+        enabled_func = function()
+            return self.settings.enable_virtual_library ~= false and not (self.ui and self.ui.document)
+        end,
+        callback = function()
+            kindle_library:prepareAllBooks()
+        end,
+        separator = true,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Main menu registration
 -- ---------------------------------------------------------------------------
@@ -968,6 +1137,8 @@ function KindlePlugin:addToMainMenu(menu_items)
         self:createSyncToggleMenuItem(),
         self:createManualSyncMenuItem(),
         self:createSyncBehaviorMenuItem(),
+        self:createSyncCurrentBookMenuItem(),
+        self:createPrepareAllBooksMenuItem(),
         self:createCacheInfoMenuItem(),
         self:createAboutMenuItem(),
     }

@@ -224,6 +224,8 @@ describe("KindlePlugin", function()
         -- the live document.
         assert.is_false(items[4].enabled_func()) -- Clear Kindle Cache
         assert.is_false(items[8].enabled_func()) -- Sync all books now
+        assert.is_false(items[10].enabled_func()) -- Sync current book now (no session)
+        assert.is_false(items[11].enabled_func()) -- Prepare all unprepared books (doc open)
 
         items[1].callback()
         local info = UIManager._shown_widgets[#UIManager._shown_widgets]
@@ -243,5 +245,104 @@ describe("KindlePlugin", function()
 
         instance:onCloseDocument()
         assert.is_nil(instance._pending_close_sync)
+    end)
+
+    it("syncs reading progress on suspend without discarding the open session", function()
+        local flushed = false
+        local synced = false
+        local instance = newPlugin({
+            sync_reading_state = true,
+            sync_on_suspend = true,
+            enable_auto_sync = true,
+        }, {
+            document = {
+                file = "/tmp/book.epub",
+                getXPointer = function()
+                    return "/point"
+                end,
+            },
+            rolling = {
+                getLastPercent = function()
+                    return 0.42
+                end,
+            },
+            doc_settings = {
+                data = {},
+                readSetting = function()
+                    return nil
+                end,
+                saveSetting = function() end,
+                flush = function()
+                    flushed = true
+                end,
+            },
+            menu = { registerToMainMenu = function() end },
+        })
+
+        instance._automatic_sync_open_session = {
+            cde_key = "B000000001",
+            source_path = "/documents/book.kfx",
+            epub_path = "/tmp/book.epub",
+        }
+
+        package.loaded["lua/reading_state_sync"].syncToKindleAutomatic = function()
+            synced = true
+            return true
+        end
+
+        instance:onSuspend()
+        assert.is_true(flushed)
+        assert.is_true(synced)
+        -- Session remains armed for subsequent reads and close
+        assert.is_not_nil(instance._automatic_sync_open_session)
+    end)
+
+    it("allows manual sync of current open book", function()
+        local flushed = false
+        local synced = false
+        local instance = newPlugin({
+            sync_reading_state = true,
+            enable_auto_sync = true,
+        }, {
+            document = {
+                file = "/tmp/book.epub",
+                getXPointer = function()
+                    return "/point"
+                end,
+            },
+            rolling = {
+                getLastPercent = function()
+                    return 0.75
+                end,
+            },
+            doc_settings = {
+                data = {},
+                readSetting = function()
+                    return nil
+                end,
+                saveSetting = function() end,
+                flush = function()
+                    flushed = true
+                end,
+            },
+            menu = { registerToMainMenu = function() end },
+        })
+
+        instance._automatic_sync_open_session = {
+            cde_key = "B000000001",
+            source_path = "/documents/book.kfx",
+            epub_path = "/tmp/book.epub",
+        }
+
+        package.loaded["lua/reading_state_sync"].syncToKindleAutomatic = function()
+            synced = true
+            return true
+        end
+
+        local item = instance:createSyncCurrentBookMenuItem()
+        assert.is_true(item.enabled_func())
+        item.callback()
+        assert.is_true(flushed)
+        assert.is_true(synced)
     end)
 end)

@@ -510,4 +510,62 @@ describe("KindleLibrary native catalog controller", function()
             return item.is_kindle_library_return or item.kindle_book_id
         end))
     end)
+
+    it("identifies unprepared books and exposes single and batch preparation", function()
+        local prepared_calls = {}
+        local fixture = build_fixture(standard_books, {
+            cache_manager = {
+                isFresh = function(_, book)
+                    return false
+                end,
+                ensureCachedEpub = function(_, book)
+                    table.insert(prepared_calls, book.id)
+                    return "/cache/" .. book.id .. ".epub"
+                end,
+            },
+        })
+
+        local unprepared = fixture.vlib:getUnpreparedBooks(false)
+        assert.equals(1, #unprepared)
+        assert.equals("convert", unprepared[1].id)
+
+        -- Test single book preparation
+        UIManager:_reset()
+        local ok = fixture.library:prepareBook(unprepared[1])
+        assert.is_true(ok)
+        assert.equals(1, #prepared_calls)
+        assert.equals("convert", prepared_calls[1])
+        assert.is_truthy(latest_info_text():find("Successfully prepared", 1, true))
+
+        -- Test batch preparation
+        UIManager:_reset()
+        prepared_calls = {}
+        local count, failed = fixture.library:prepareAllBooks()
+        assert.equals(1, count)
+        assert.equals(0, failed)
+        assert.equals(1, #prepared_calls)
+        assert.is_truthy(latest_info_text():find("Successfully prepared 1 books", 1, true))
+    end)
+
+    it("exposes Prepare buttons in file dialog for convertible books", function()
+        local fixture = build_fixture(standard_books, {
+            cache_manager = {
+                isFresh = function()
+                    return false
+                end,
+            },
+        })
+        local buttons = fixture.library:fileDialogButtons(fixture.source_path, true)
+        assert.equals(5, #buttons)
+        assert.equals("Kindle information", buttons[1].text)
+        assert.equals("Clear Kindle cache", buttons[2].text)
+        assert.equals("Refresh Kindle library", buttons[3].text)
+        assert.equals("Prepare for KOReader", buttons[4].text)
+        assert.is_true(buttons[4].enabled)
+        assert.equals("Prepare all unprepared books", buttons[5].text)
+
+        -- Direct book has Prepare disabled
+        local direct_buttons = fixture.library:fileDialogButtons(fixture.direct_path, true)
+        assert.is_falsy(direct_buttons[4].enabled)
+    end)
 end)

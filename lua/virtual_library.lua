@@ -165,6 +165,20 @@ function VirtualLibrary:isBookPrepared(book)
     return fresh == true
 end
 
+function VirtualLibrary:getUnpreparedBooks(force)
+    local books, err = self:buildMappings(force)
+    if not books then
+        return nil, err
+    end
+    local unprepared = {}
+    for _, book in ipairs(books) do
+        if book.open_mode == "convert" and book.source_path and not self:isBookPrepared(book) then
+            table.insert(unprepared, book)
+        end
+    end
+    return unprepared
+end
+
 function VirtualLibrary:resolveBookPath(book)
     if not book then
         return nil, "missing book"

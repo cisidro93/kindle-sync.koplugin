@@ -1,5 +1,6 @@
 local BD = require("ui/bidi")
 local InfoMessage = require("ui/widget/infomessage")
+local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
 local filemanagerutil = require("apps/filemanager/filemanagerutil")
 local logger = require("logger")
@@ -154,11 +155,117 @@ function KindleLibrary:showBookInfo(book)
     end
     local details = BD.auto(book.display_name or book.title or book.id)
     details = details .. "\n\n" .. (book.source_path and BD.filepath(book.source_path) or _("Cloud-only Kindle entry"))
-    if book.open_mode == "blocked" then
+    if book.cde_key and book.cde_key ~= "" then
+        details = details .. "\n\n" .. T(_("Kindle Key: %1"), book.cde_key)
+    end
+    if book.open_mode == "convert" then
+        if self.virtual_library:isBookPrepared(book) then
+            details = details .. "\n\n" .. _("Status: Prepared for KOReader (cached)")
+        else
+            details = details .. "\n\n" .. _("Status: Not prepared for KOReader")
+        end
+    elseif book.open_mode == "direct" then
+        details = details .. "\n\n" .. _("Status: Direct open (no conversion needed)")
+    elseif book.open_mode == "blocked" then
         details = details .. "\n\n" .. self.virtual_library:getBlockedReasonText(book)
     end
     showInfo(details)
     return true
+end
+
+function KindleLibrary:prepareBook(book)
+    if not book then
+        return false, "missing book"
+    end
+    if book.open_mode ~= "convert" then
+        if book.open_mode == "blocked" then
+            showInfo(self.virtual_library:getBlockedReasonText(book))
+        else
+            showInfo(_("This book does not require conversion."))
+        end
+        return false
+    end
+    if self.virtual_library:isBookPrepared(book) then
+        showInfo(_("This book is already prepared for reading."))
+        return true
+    end
+
+    local title = BD.auto(book.display_name or book.title or book.id)
+    local ok = false
+    local err_msg = nil
+    Trapper:wrap(function()
+        Trapper:info(T(_("Preparing book for KOReader:\n%1"), title))
+        local cached_path, err = self.virtual_library:resolveBookPath(book)
+        if cached_path then
+            ok = true
+        else
+            err_msg = err or _("unknown error")
+        end
+    end)
+
+    if ok then
+        showInfo(T(_("Successfully prepared:\n%1"), title), 3)
+        if self.ui and self.ui.file_chooser then
+            self.ui.file_chooser:refreshPath()
+        end
+        return true
+    else
+        showInfo(T(_("Failed to prepare book:\n%1\n\n%2"), title, self.virtual_library:getBlockedReasonText({ block_reason = err_msg })))
+        return false, err_msg
+    end
+end
+
+function KindleLibrary:prepareAllBooks(books_subset)
+    local books = books_subset or self.virtual_library:getUnpreparedBooks(false)
+    if not books then
+        showInfo(_("Failed to query Kindle library for unprepared books."))
+        return 0, 0
+    end
+    if #books == 0 then
+        showInfo(_("All convertible Kindle books are already prepared."), 3)
+        return 0, 0
+    end
+
+    local total = #books
+    local prepared_count = 0
+    local failed_count = 0
+    local aborted = false
+
+    Trapper:wrap(function()
+        Trapper:setPausedText(_("Do you want to abort book preparation?"), _("Abort"), _("Continue"))
+        for i, book in ipairs(books) do
+            local title = BD.auto(book.display_name or book.title or book.id)
+            local go_on = Trapper:info(T(_("Preparing (%1 / %2):\n%3"), i, total, title))
+            if not go_on then
+                aborted = true
+                logger.info("KindlePlugin: batch preparation aborted at book", i, "of", total)
+                break
+            end
+
+            local cached_path, err = self.virtual_library:resolveBookPath(book)
+            if cached_path then
+                prepared_count = prepared_count + 1
+            else
+                failed_count = failed_count + 1
+                logger.warn("KindlePlugin: batch preparation failed for", book.id, err)
+            end
+        end
+    end)
+
+    if self.ui and self.ui.file_chooser then
+        self.ui.file_chooser:refreshPath()
+    end
+
+    local summary
+    if aborted then
+        summary = T(_("Preparation aborted. Prepared: %1, Failed: %2 of %3 books."), prepared_count, failed_count, total)
+    elseif failed_count > 0 then
+        summary = T(_("Batch preparation completed with errors. Prepared: %1, Failed: %2 of %3 books."), prepared_count, failed_count, total)
+    else
+        summary = T(_("Successfully prepared %1 books for KOReader."), prepared_count)
+    end
+    showInfo(summary, 4)
+    return prepared_count, failed_count
 end
 
 function KindleLibrary:fileDialogButtons(file, is_file)
@@ -196,6 +303,21 @@ function KindleLibrary:fileDialogButtons(file, is_file)
             callback = function()
                 closeDialog()
                 self:show(self.ui, true)
+            end,
+        },
+        {
+            text = _("Prepare for KOReader"),
+            enabled = book.open_mode == "convert" and not self.virtual_library:isBookPrepared(book),
+            callback = function()
+                closeDialog()
+                self:prepareBook(book)
+            end,
+        },
+        {
+            text = _("Prepare all unprepared books"),
+            callback = function()
+                closeDialog()
+                self:prepareAllBooks()
             end,
         },
     }
