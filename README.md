@@ -1,19 +1,23 @@
-## Kindle Library for KOReader
+## Kindle Sync & Library for KOReader (`kindle-sync.koplugin`)
 
-A KOReader plugin that lets you read the books in your Kindle's native library directly in KOReader. Your books appear in a **Kindle Library** folder in the file browser — tap to read. Everything happens on-device.
+A KOReader plugin that lets you read the books in your Kindle's native library directly in KOReader, featuring **multi-book batch background preparation** and **daily reading goal / Amazon Whispersync streak tracking**. Your books appear in a **Kindle Library** folder in the file browser — tap to read. Everything happens on-device.
 
-**[Download latest release](https://github.com/kaikozlov/kindle.koplugin/releases/latest)**
+**[Download latest release](https://github.com/cisidro93/kindle-sync.koplugin/releases/latest)**
 
 ### Features
 
 - **Native Kindle Library** — browse your Kindle books in KOReader, with covers and metadata
 - **Entirely on-device** — your library is prepared and cached locally; no computer or external services needed
-- **Exact reading state sync** — switch between KOReader and the stock Kindle reader at the same position, in either direction
-- **Cached for speed** — books are prepared on first open and cached, so re-opening is instant
+- **Multi-Book Batch Preparation** — prepare all your books in the background with progress reporting and abort support, without needing to open them one-by-one
+- **Amazon Daily Reading Goals & Whispersync Tracking** — reading progress is automatically pushed to the Kindle Reader Data Store (`.yjf` KRDS sidecar) on book close and device sleep/suspend, updating your Amazon Reading Insights streaks
+- **Automatic Sidecar Bootstrapping** — brand-new books never before opened in the native Kindle reader are automatically bootstrapped with full KRDS sidecars so Whispersync tracks them immediately
+- **Whispersync Cloud Nudge** — automatically signals Kindle's `com.lab126.todo` background Whispersync daemon via LIPC to sync reading goals over Wi-Fi
+- **Exact reading state sync** — switch between KOReader and the stock Kindle reader at the exact same reading position, in either direction
+- **Cached for speed** — books are prepared and cached so subsequent opening is instant
 
 ### Installation
 
-1. Download `kindle-koplugin-armv7.zip` from the [latest release](https://github.com/kaikozlov/kindle.koplugin/releases/latest)
+1. Download `kindle-koplugin-armv7.zip` from the [latest release](https://github.com/cisidro93/kindle-sync.koplugin/releases/latest)
 2. Extract `kindle.koplugin/` to your KOReader plugins directory:
    - Kindle: `/mnt/us/koreader/plugins/`
 3. Restart KOReader
@@ -45,10 +49,15 @@ Menu locations: **Menu → Tools → More tools → Kindle Library**
 | Setting | Description |
 | ------- | ----------- |
 | Sync reading state with Kindle | Master switch for reading-position sync (off by default) |
+| Sync current book now | Pushes current reading progress to Kindle without closing the book |
 | Sync all books now | Bulk-sync all eligible prepared books; disabled while a book is open |
+| Prepare all unprepared books | Converts and caches all Kindle books in the background with progress reporting |
+| Automatic sync on book open and close | Run sync automatically instead of only manually (on by default) |
+| Automatic sync on device sleep (suspend) | Automatically flushes and syncs reading progress when the Kindle goes to sleep |
+| Trigger Kindle Cloud Sync after sync | Signals Whispersync over Wi-Fi after sync to update Amazon daily goals/streaks |
+| Trigger Kindle Cloud Sync now | Manually triggers Whispersync cloud sync immediately |
 | Enable sync FROM Kindle TO KOReader | Pull Kindle's position into KOReader (off by default) |
 | Enable sync FROM KOReader TO Kindle | Push KOReader's position to Kindle (on by default) |
-| Automatic sync on book open and close | Run sync automatically instead of only manually (on by default) |
 | FROM / TO Kindle sync settings | Per-direction rules for newer/older progress: Always sync, Ask me, or Never |
 | Virtual Library Enabled | Show the Kindle Library folder in the file browser |
 | Virtual Library Folder Cover | Set a custom cover image for the folder entry |
