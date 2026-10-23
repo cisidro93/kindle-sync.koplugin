@@ -386,4 +386,67 @@ function KindleSidecar.set_object_position(obj, position, timestamp_ms)
     return nil, "unsupported " .. obj.name .. " object"
 end
 
+function KindleSidecar.create_initial_store(position, timestamp_ms)
+    local timestamp = timestamp_ms or math.floor(os.time() * 1000)
+    local values = {
+        {
+            tag = TAG_OBJECT_BEGIN,
+            value = {
+                name = "updated_lpr",
+                values = {
+                    { tag = TAG_UTF, value = position },
+                    { tag = TAG_LONG, value = timestamp },
+                    { tag = TAG_LONG, value = -1 },
+                    { tag = TAG_UTF, value = "", empty = true },
+                    { tag = TAG_UTF, value = "", empty = true },
+                },
+            },
+        },
+        {
+            tag = TAG_OBJECT_BEGIN,
+            value = {
+                name = "lpr",
+                values = {
+                    { tag = TAG_BYTE, value = 2 },
+                    { tag = TAG_UTF, value = position },
+                    { tag = TAG_LONG, value = timestamp },
+                },
+            },
+        },
+        {
+            tag = TAG_OBJECT_BEGIN,
+            value = {
+                name = "fpr",
+                values = {
+                    { tag = TAG_UTF, value = position },
+                    { tag = TAG_LONG, value = timestamp },
+                },
+            },
+        },
+        {
+            tag = TAG_OBJECT_BEGIN,
+            value = {
+                name = "erl",
+                values = {
+                    { tag = TAG_UTF, value = position },
+                },
+            },
+        },
+        {
+            tag = TAG_OBJECT_BEGIN,
+            value = {
+                name = "sync_lpr",
+                values = {
+                    { tag = TAG_BOOLEAN, value = true },
+                },
+            },
+        },
+    }
+    return {
+        first = { tag = TAG_LONG, value = 1 },
+        count = { tag = TAG_INT, value = #values },
+        values = values,
+    }
+end
+
 return KindleSidecar

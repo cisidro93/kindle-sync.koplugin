@@ -259,7 +259,7 @@ local function writeSidecarPosition(path, long_position, pid, timestamp_ms)
     for _, obj in ipairs(KindleSidecar.objects(store, "fpr")) do
         local current = KindleSidecar.position_from_object(obj)
         local current_pid = current and tonumber((current:match(":(%d+)$"))) or -1
-        if current_pid < pid then
+        if current_pid <= pid then
             KindleSidecar.set_object_position(obj, position, timestamp)
         end
     end
@@ -348,6 +348,9 @@ function HelperClient:nativeProgressAvailable(content_key, native_path)
             return true
         end
     end
+    if self.settings and self.settings.create_missing_sidecar == true then
+        return true
+    end
     return false
 end
 
@@ -384,6 +387,37 @@ function HelperClient:saveNativeProgress(content_key, native_path, position)
             else
                 last_error = write_error
                 logger.warn("KindlePlugin: sidecar position write failed:", sidecar, write_error)
+            end
+        end
+    end
+    if not written_any and self.settings and self.settings.create_missing_sidecar == true then
+        local stem = native_path:gsub("%.%w+$", "")
+        local sidecar_dir = stem .. ".sdr"
+        if lfs.attributes(sidecar_dir, "mode") ~= "directory" then
+            lfs.mkdir(sidecar_dir)
+        end
+        if lfs.attributes(sidecar_dir, "mode") == "directory" then
+            local target_sidecar = sidecar_dir .. "/" .. content_key .. ".yjf"
+            local initial_store = KindleSidecar.create_initial_store(position.long .. ":" .. position.pid)
+            local encoded = KindleSidecar.encode(initial_store)
+            if encoded then
+                local temp_path = target_sidecar .. ".kindle-tmp." .. tostring(os.time())
+                local temp = io.open(temp_path, "wb")
+                if temp then
+                    temp:write(encoded)
+                    pcall(function()
+                        C.fchmod(C.fileno(temp), 420)
+                    end)
+                    local synced = ffiUtil.fsyncOpenedFile(temp, true)
+                    temp:close()
+                    if synced and os.rename(temp_path, target_sidecar) then
+                        ffiUtil.fsyncDirectory(target_sidecar)
+                        written_any = true
+                        logger.info("KindlePlugin: created missing sidecar:", target_sidecar)
+                    else
+                        os.remove(temp_path)
+                    end
+                end
             end
         end
     end

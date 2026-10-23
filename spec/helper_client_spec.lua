@@ -348,4 +348,56 @@ describe("HelperClient", function()
             assert.is_true(result.ok)
         end)
     end)
+
+    describe("missing sidecar bootstrapping", function()
+        local KindleSidecar = require("lua/lib/kindle_sidecar")
+
+        it("creates a byte-valid initial KRDS store", function()
+            local store = KindleSidecar.create_initial_store("AscEAAAAAAAA:5", 123456789)
+            local encoded = KindleSidecar.encode(store)
+            assert.is_truthy(encoded)
+
+            local parsed = KindleSidecar.parse(encoded)
+            assert.is_truthy(parsed)
+
+            local lpr_objs = KindleSidecar.objects(parsed, "lpr")
+            assert.equals(1, #lpr_objs)
+            local pos, ts = KindleSidecar.position_from_object(lpr_objs[1])
+            assert.equals("AscEAAAAAAAA:5", pos)
+            assert.equals(123456789, ts)
+
+            local sync_lpr_objs = KindleSidecar.objects(parsed, "sync_lpr")
+            assert.equals(1, #sync_lpr_objs)
+            assert.is_true(sync_lpr_objs[1].values[1].value)
+        end)
+
+        it("bootstraps a missing .yjf sidecar when create_missing_sidecar setting is enabled", function()
+            local brand_new_kfx = tmpdir .. "/brand_new_book.kfx"
+            local f = assert(io.open(brand_new_kfx, "wb"))
+            f:close()
+
+            local client = HelperClient:new(client_opts)
+            client:setSettings({ create_missing_sidecar = true })
+
+            assert.is_true(client:nativeProgressAvailable("B007N6JEII", brand_new_kfx))
+
+            local ok, err = client:saveNativeProgress("B007N6JEII", brand_new_kfx, {
+                long = "AscEAAAAAAAA",
+                pid = 42,
+                percent = 50,
+            })
+            assert.is_true(ok, err)
+
+            local sidecar_path = tmpdir .. "/brand_new_book.sdr/B007N6JEII.yjf"
+            local read_client = HelperClient:new(client_opts)
+            local progress = read_client:readNativeProgress("B007N6JEII", brand_new_kfx)
+            assert.is_not_nil(progress)
+            assert.equals("AscEAAAAAAAA", progress.long)
+            assert.equals(42, progress.pid)
+
+            os.remove(sidecar_path)
+            require("libs/libkoreader-lfs").rmdir(tmpdir .. "/brand_new_book.sdr")
+            os.remove(brand_new_kfx)
+        end)
+    end)
 end)
