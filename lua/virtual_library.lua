@@ -75,7 +75,7 @@ function VirtualLibrary:buildMappings(force)
         -- Cache paths are deterministic even before the EPUB exists. Indexing
         -- them lets History/Collections and cold-start ReaderUI map a persisted
         -- cached EPUB back to its Kindle book after a restart.
-        if self.cache_manager then
+        if self.cache_manager and type(self.cache_manager.getCachePaths) == "function" then
             local cached_path = self.cache_manager:getCachePaths(book)
             if cached_path then
                 self.books_by_real_path[cached_path] = book
@@ -221,7 +221,13 @@ end
 -- EPUB when one exists, else the Kindle source. Returns nil when neither
 -- exists on disk; such books become unavailable action rows, not fake files.
 local function resolveListedFile(vlib, book)
-    if book.open_mode ~= "blocked" and book.open_mode ~= "direct" and vlib.cache_manager and vlib:isBookPrepared(book) then
+    if
+        book.open_mode ~= "blocked"
+        and book.open_mode ~= "direct"
+        and vlib.cache_manager
+        and type(vlib.cache_manager.getCachePaths) == "function"
+        and vlib:isBookPrepared(book)
+    then
         local cached_path = vlib.cache_manager:getCachePaths(book)
         local cached_attr = cached_path and lfs.attributes(cached_path) or nil
         if cached_attr and cached_attr.mode == "file" then

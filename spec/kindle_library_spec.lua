@@ -18,9 +18,13 @@ describe("KindleLibrary native catalog controller", function()
     local KindleLibrary = require("lua/kindle_library")
     local LibraryIndex = require("lua/library_index")
     local VirtualLibrary = require("lua/virtual_library")
+    local Trapper = require("ui/trapper")
 
     local original_get_books
     local original_open_file
+    local original_wrap
+    local original_info
+    local original_clear
     local temp_dirs = {}
     local fixtures = {}
 
@@ -30,17 +34,30 @@ describe("KindleLibrary native catalog controller", function()
     setup(function()
         helper.setup_complete()
         original_open_file = filemanagerutil.openFile
+        original_wrap = Trapper.wrap
+        original_info = Trapper.info
+        original_clear = Trapper.clear
     end)
 
     before_each(function()
         helper.before_each()
         disable_plugins()
         original_get_books = LibraryIndex.getBooks
+        Trapper.wrap = function(_, fn)
+            return fn()
+        end
+        Trapper.info = function()
+            return true
+        end
+        Trapper.clear = function() end
         temp_dirs = {}
         fixtures = {}
     end)
 
     after_each(function()
+        Trapper.wrap = original_wrap
+        Trapper.info = original_info
+        Trapper.clear = original_clear
         for _, fixture in ipairs(fixtures) do
             pcall(function()
                 FileChooserExt:unapply(FileChooser)
