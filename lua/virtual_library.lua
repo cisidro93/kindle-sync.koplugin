@@ -158,7 +158,7 @@ function VirtualLibrary:isBookPrepared(book)
     if book.open_mode == "direct" then
         return book.source_path ~= nil
     end
-    if book.open_mode == "blocked" or not self.cache_manager then
+    if book.open_mode == "blocked" or not self.cache_manager or type(self.cache_manager.isFresh) ~= "function" then
         return false
     end
     local fresh = self.cache_manager:isFresh(book)
@@ -189,7 +189,7 @@ function VirtualLibrary:resolveBookPath(book)
     if book.open_mode == "direct" then
         return book.source_path
     end
-    if not self.cache_manager then
+    if not self.cache_manager or type(self.cache_manager.ensureCachedEpub) ~= "function" then
         return nil, "conversion_failed"
     end
 
