@@ -184,6 +184,44 @@ function FileChooserExt:apply(FileChooser)
     FileManager:addFileDialogButtons("kindle_library", function(file, is_file)
         return self.kindle_library:fileDialogButtons(file, is_file)
     end)
+
+    local ok, BookInfoManager = pcall(require, "bookinfomanager")
+    if ok and BookInfoManager then
+        self.orig_getBookInfo = BookInfoManager.getBookInfo
+        self.orig_extractBooksInDirectory = BookInfoManager.extractBooksInDirectory
+
+        local vlib = self.virtual_library
+        local klib = self.kindle_library
+
+        BookInfoManager.getBookInfo = function(bim_self, filepath, get_cover)
+            local info = self.orig_getBookInfo(bim_self, filepath, get_cover)
+            if self.applied and info and info._no_provider and vlib then
+                local book = vlib:getBook(filepath)
+                if book and klib and klib.cover_importer then
+                    local cached = klib.cover_importer:getCachedBookInfo(filepath, get_cover)
+                    if cached then
+                        return cached
+                    end
+                    if get_cover then
+                        local imported = klib.cover_importer:importBookCover(book, nil, filepath)
+                        if imported then
+                            return klib.cover_importer:getCachedBookInfo(filepath, get_cover) or info
+                        end
+                    end
+                end
+            end
+            return info
+        end
+
+        BookInfoManager.extractBooksInDirectory = function(bim_self, path, cover_specs)
+            local chooser = klib and klib.ui and klib.ui.file_chooser
+            if self.applied and chooser and klib:isBrowsing(chooser) then
+                return klib:extractAllCovers(cover_specs)
+            end
+            return self.orig_extractBooksInDirectory(bim_self, path, cover_specs)
+        end
+    end
+
     self.applied = true
     local ui = self.kindle_library.ui
     self:attach(ui and ui.file_chooser, FileChooser)
@@ -196,6 +234,19 @@ function FileChooserExt:unapply(FileChooser)
     end
     self.applied = false
     require("apps/filemanager/filemanager"):removeFileDialogButtons("kindle_library")
+
+    local ok, BookInfoManager = pcall(require, "bookinfomanager")
+    if ok and BookInfoManager then
+        if self.orig_getBookInfo then
+            BookInfoManager.getBookInfo = self.orig_getBookInfo
+            self.orig_getBookInfo = nil
+        end
+        if self.orig_extractBooksInDirectory then
+            BookInfoManager.extractBooksInDirectory = self.orig_extractBooksInDirectory
+            self.orig_extractBooksInDirectory = nil
+        end
+    end
+
     for chooser, methods in pairs(self.instances) do
         if chooser.genItemTableFromPath == methods.installed then
             chooser.genItemTableFromPath = methods.original

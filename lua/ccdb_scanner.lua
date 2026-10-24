@@ -25,7 +25,8 @@ SELECT
     p_cdeKey,
     p_isDRMProtected,
     p_diskUsage,
-    p_contentSize
+    p_contentSize,
+    p_thumbnail
 FROM Entries
 WHERE p_type = 'Entry:Item'
     AND p_mimeType IN ('application/x-kfx-ebook', 'application/x-mobipocket-ebook')
@@ -149,11 +150,22 @@ function CcDbScanner:scan()
         -- Cloud-only entries have no local source path.
         local source_path = (location and location ~= "") and location or nil
 
+        local raw_thumb = results.p_thumbnail and results.p_thumbnail[i]
+        local thumbnail_path = nil
+        if raw_thumb and raw_thumb ~= "" then
+            if raw_thumb:sub(1, 1) ~= "/" then
+                thumbnail_path = "/mnt/us/" .. raw_thumb
+            else
+                thumbnail_path = raw_thumb
+            end
+        end
+
         -- Build a stable ID from the cc.db UUID
         local book_id = "cc:" .. uuid
 
         local book = {
             id = book_id,
+            uuid = uuid,
             source_path = source_path,
             title = title,
             authors = authors,
@@ -162,6 +174,7 @@ function CcDbScanner:scan()
             cde_key = cde_key,
             open_mode = open_mode,
             source_size = tonumber(disk_usage) or tonumber(content_size) or 0,
+            thumbnail_path = thumbnail_path,
         }
 
         if block_reason then

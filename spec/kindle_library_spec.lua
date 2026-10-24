@@ -564,7 +564,7 @@ describe("KindleLibrary native catalog controller", function()
         assert.is_truthy(latest_info_text():find("Successfully prepared 1 books", 1, true))
     end)
 
-    it("exposes Prepare buttons in file dialog for convertible books", function()
+    it("exposes Prepare, Cover, and Highlight buttons in file dialog for convertible books", function()
         local fixture = build_fixture(standard_books, {
             cache_manager = {
                 isFresh = function()
@@ -573,16 +573,36 @@ describe("KindleLibrary native catalog controller", function()
             },
         })
         local buttons = fixture.library:fileDialogButtons(fixture.convert_path, true)
-        assert.equals(5, #buttons)
+        assert.equals(7, #buttons)
         assert.equals("Kindle information", buttons[1].text)
         assert.equals("Clear Kindle cache", buttons[2].text)
         assert.equals("Refresh Kindle library", buttons[3].text)
-        assert.equals("Prepare for KOReader", buttons[4].text)
-        assert.is_true(buttons[4].enabled)
-        assert.equals("Prepare all unprepared books", buttons[5].text)
+        assert.equals("Cache all Kindle covers", buttons[4].text)
+        assert.equals("Kindle highlights", buttons[5].text)
+        assert.equals("Prepare for KOReader", buttons[6].text)
+        assert.is_true(buttons[6].enabled)
+        assert.equals("Prepare all unprepared books", buttons[7].text)
 
         -- Direct book has Prepare disabled
         local direct_buttons = fixture.library:fileDialogButtons(fixture.direct_path, true)
-        assert.is_falsy(direct_buttons[4].enabled)
+        assert.is_falsy(direct_buttons[6].enabled)
+    end)
+
+    it("extracts all Kindle covers in batch", function()
+        local fixture = build_fixture(standard_books)
+        local imported = {}
+        fixture.library.cover_importer = {
+            importBookCover = function(_, book)
+                table.insert(imported, book.id)
+                return true
+            end,
+        }
+
+        UIManager:_reset()
+        local cached, failed = fixture.library:extractAllCovers()
+        assert.equals(#standard_books, cached)
+        assert.equals(0, failed)
+        assert.equals(#standard_books, #imported)
+        assert.is_truthy(latest_info_text():find("Successfully cached covers", 1, true))
     end)
 end)

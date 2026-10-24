@@ -432,4 +432,49 @@ describe("VirtualLibrary native catalog rows", function()
         assert.equals(listed, files[1].path)
         assert.equals(0, #unavailable)
     end)
+
+    describe("getBookThumbnailPath", function()
+        local lfs = require("libs/libkoreader-lfs")
+
+        it("resolves thumbnail_path directly when file exists and is valid size", function()
+            local vlib = VirtualLibrary:new({})
+            local thumb = "/mnt/us/system/thumbnails/test.jpg"
+            lfs._setFileState(thumb, { exists = true, attributes = { mode = "file", size = 2048 } })
+
+            local path = vlib:getBookThumbnailPath({ thumbnail_path = thumb })
+            assert.equals(thumb, path)
+            lfs._clearFileStates()
+        end)
+
+        it("substitutes /mnt/us/ with /mnt/base-us/ when needed", function()
+            local vlib = VirtualLibrary:new({})
+            local original = "/mnt/us/system/bookcovers/sub/test.jpg"
+            local alt = "/mnt/base-us/system/bookcovers/sub/test.jpg"
+            lfs._setFileState(alt, { exists = true, attributes = { mode = "file", size = 4096 } })
+
+            local path = vlib:getBookThumbnailPath({ thumbnail_path = original })
+            assert.equals(alt, path)
+            lfs._clearFileStates()
+        end)
+
+        it("falls back to /system/thumbnails/ with cde_key or uuid", function()
+            local vlib = VirtualLibrary:new({})
+            local cand = "/mnt/us/system/thumbnails/thumbnail_B00XYZ_EBOK_portrait.jpg"
+            lfs._setFileState(cand, { exists = true, attributes = { mode = "file", size = 8192 } })
+
+            local path = vlib:getBookThumbnailPath({ cde_key = "B00XYZ" })
+            assert.equals(cand, path)
+            lfs._clearFileStates()
+        end)
+
+        it("returns nil when thumbnail is smaller than 1024 bytes (placeholder/corrupted)", function()
+            local vlib = VirtualLibrary:new({})
+            local thumb = "/mnt/us/system/thumbnails/tiny.jpg"
+            lfs._setFileState(thumb, { exists = true, attributes = { mode = "file", size = 500 } })
+
+            local path = vlib:getBookThumbnailPath({ thumbnail_path = thumb })
+            assert.is_nil(path)
+            lfs._clearFileStates()
+        end)
+    end)
 end)

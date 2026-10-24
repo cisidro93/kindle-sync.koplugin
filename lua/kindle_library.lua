@@ -1,4 +1,5 @@
 local BD = require("ui/bidi")
+local CoverCacheImporter = require("lua/lib/cover_cache_importer")
 local InfoMessage = require("ui/widget/infomessage")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
@@ -17,6 +18,7 @@ function KindleLibrary:new(virtual_library, cache_manager)
     return setmetatable({
         virtual_library = virtual_library,
         cache_manager = cache_manager,
+        cover_importer = CoverCacheImporter:new(virtual_library, cache_manager),
         ui = nil,
         browsing = false,
         return_to_library_request = nil,
@@ -271,6 +273,77 @@ function KindleLibrary:prepareAllBooks(books_subset)
     return prepared_count, failed_count
 end
 
+function KindleLibrary:extractAllCovers(cover_specs)
+    local books, err = self.virtual_library:buildMappings(false)
+    if not books then
+        showInfo(_("Failed to query Kindle library for cover extraction:\n") .. (err or _("unknown error")))
+        return 0, 0
+    end
+    if #books == 0 then
+        showInfo(_("No Kindle books found."), 3)
+        return 0, 0
+    end
+
+    local total = #books
+    local cached_count = 0
+    local failed_count = 0
+    local aborted = false
+
+    Trapper:wrap(function()
+        Trapper:setPausedText(_("Do you want to abort cover extraction?"), _("Abort"), _("Continue"))
+        for i, book in ipairs(books) do
+            local title = BD.auto(book.display_name or book.title or book.id)
+            local go_on = Trapper:info(T(_("Caching covers (%1 / %2):\n%3"), i, total, title))
+            if not go_on then
+                aborted = true
+                logger.info("KindlePlugin: cover extraction aborted at book", i, "of", total)
+                break
+            end
+
+            local ok, c_err = self.cover_importer:importBookCover(book, cover_specs)
+            if ok then
+                cached_count = cached_count + 1
+            else
+                failed_count = failed_count + 1
+                logger.warn("KindlePlugin: cover import failed for", book.id, c_err)
+            end
+        end
+    end)
+
+    if self.ui and self.ui.file_chooser then
+        self.ui.file_chooser:refreshPath()
+    end
+
+    local summary
+    if aborted then
+        summary = T(_("Cover extraction aborted. Cached: %1, Missing: %2 of %3 books."), cached_count, failed_count, total)
+    elseif failed_count > 0 then
+        summary = T(_("Cover caching completed. Cached: %1, Missing thumbnails: %2 of %3 books."), cached_count, failed_count, total)
+    else
+        summary = T(_("Successfully cached covers for all %1 Kindle books."), cached_count)
+    end
+    showInfo(summary, 4)
+    return cached_count, failed_count
+end
+
+function KindleLibrary:showBookHighlights(book)
+    if not book then
+        return
+    end
+    local clippings = self.clippings_parser and self.clippings_parser:getClippingsForBook(book) or {}
+    if #clippings == 0 then
+        showInfo(T(_("No Kindle highlights found for:\n%1"), book.title or book.id))
+        return
+    end
+    if self.highlights_viewer then
+        self.highlights_viewer:showBookClippings({
+            title = book.title or book.id,
+            author = type(book.authors) == "table" and table.concat(book.authors, ", ") or (book.authors or ""),
+            clippings = clippings,
+        })
+    end
+end
+
 function KindleLibrary:fileDialogButtons(file, is_file)
     local book = is_file and self.virtual_library:getBook(file)
     if not book then
@@ -306,6 +379,20 @@ function KindleLibrary:fileDialogButtons(file, is_file)
             callback = function()
                 closeDialog()
                 self:show(self.ui, true)
+            end,
+        },
+        {
+            text = _("Cache all Kindle covers"),
+            callback = function()
+                closeDialog()
+                self:extractAllCovers()
+            end,
+        },
+        {
+            text = _("Kindle highlights"),
+            callback = function()
+                closeDialog()
+                self:showBookHighlights(book)
             end,
         },
         {

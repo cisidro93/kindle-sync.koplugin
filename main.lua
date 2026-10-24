@@ -18,6 +18,9 @@ local util = require("util")
 local CacheManager = require("lua/cache_manager")
 local FileChooserExt = require("lua/filechooser_ext")
 local HelperClient = require("lua/helper_client")
+local KindleClippingsParser = require("lua/lib/kindle_clippings_parser")
+local KindleHighlightImporter = require("lua/lib/kindle_highlight_importer")
+local KindleHighlightsViewer = require("lua/lib/kindle_highlights_viewer")
 local KindleLibrary = require("lua/kindle_library")
 local LibraryIndex = require("lua/library_index")
 local OpenFileExt = require("lua/open_file_ext")
@@ -64,6 +67,7 @@ local default_settings = {
     sync_on_suspend = true,
     create_missing_sidecar = true,
     trigger_cloud_sync = true,
+    import_kindle_highlights = true,
 }
 
 local helper_client = HelperClient:new()
@@ -72,6 +76,12 @@ local virtual_library = VirtualLibrary:new(library_index)
 local cache_manager = CacheManager:new(helper_client)
 local reading_state_sync = ReadingStateSync:new(helper_client)
 local kindle_library = KindleLibrary:new(virtual_library, cache_manager)
+local clippings_parser = KindleClippingsParser:new()
+local highlight_importer = KindleHighlightImporter:new(clippings_parser)
+local highlights_viewer = KindleHighlightsViewer:new(clippings_parser)
+kindle_library.clippings_parser = clippings_parser
+kindle_library.highlight_importer = highlight_importer
+kindle_library.highlights_viewer = highlights_viewer
 virtual_library:setCacheManager(cache_manager)
 reading_state_sync:setVirtualLibrary(virtual_library)
 
@@ -248,6 +258,11 @@ end
 function KindlePlugin:onDocSettingsLoad(doc_settings, document)
     self._doc_settings_load_document = document and document.file or nil
 
+    local mapped_book = getMappedBook(document)
+    if mapped_book and self.settings.import_kindle_highlights ~= false and highlight_importer then
+        highlight_importer:importHighlights(mapped_book, doc_settings)
+    end
+
     -- A close-time automatic push is only safe when this reader session was
     -- already participating in automatic sync at open. Enabling sync (or
     -- automatic sync) halfway through a book must not turn the eventual close
@@ -258,7 +273,7 @@ function KindlePlugin:onDocSettingsLoad(doc_settings, document)
         return
     end
 
-    local book = getMappedBook(document)
+    local book = mapped_book
     if not book or not book.source_path then
         return
     end
@@ -1117,6 +1132,33 @@ function KindlePlugin:createPrepareAllBooksMenuItem()
     }
 end
 
+--- Creates Kindle highlights viewer menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createKindleHighlightsMenuItem()
+    return {
+        text = _("Kindle Highlights"),
+        help_text = _("Browse, search, and export highlights from your Kindle library."),
+        callback = function()
+            highlights_viewer:show()
+        end,
+    }
+end
+
+--- Creates cache all Kindle covers menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createCacheAllCoversMenuItem()
+    return {
+        text = _("Cache all Kindle covers"),
+        help_text = _("Imports high-resolution Kindle covers into KOReader's cover cache for all books."),
+        enabled_func = function()
+            return self.settings.enable_virtual_library ~= false
+        end,
+        callback = function()
+            kindle_library:extractAllCovers()
+        end,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Main menu registration
 -- ---------------------------------------------------------------------------
@@ -1130,6 +1172,9 @@ function KindlePlugin:addToMainMenu(menu_items)
     local sub_item_table = {
         self:createBrowseLibraryMenuItem(),
         self:createRefreshLibraryMenuItem(),
+        self:createKindleHighlightsMenuItem(),
+        self:createCacheAllCoversMenuItem(),
+        self:createPrepareAllBooksMenuItem(),
         self:createClearKeysMenuItem(),
         self:createClearCacheMenuItem(),
         self:createVirtualLibraryToggleMenuItem(),
@@ -1138,7 +1183,6 @@ function KindlePlugin:addToMainMenu(menu_items)
         self:createManualSyncMenuItem(),
         self:createSyncBehaviorMenuItem(),
         self:createSyncCurrentBookMenuItem(),
-        self:createPrepareAllBooksMenuItem(),
         self:createCacheInfoMenuItem(),
         self:createAboutMenuItem(),
     }

@@ -201,6 +201,100 @@ function VirtualLibrary:resolveBookPath(book)
     return nil, err or "conversion_failed"
 end
 
+local function isValidThumbnail(path)
+    if type(path) ~= "string" or path == "" then
+        return false
+    end
+    local attr = lfs.attributes(path)
+    return attr and attr.mode == "file" and attr.size and attr.size >= 1024
+end
+
+function VirtualLibrary:getBookThumbnailPath(book)
+    if not book then
+        return nil
+    end
+    if book.resolved_thumbnail_path then
+        return book.resolved_thumbnail_path
+    end
+
+    -- 1. Check book.thumbnail_path from cc.db
+    if book.thumbnail_path then
+        if isValidThumbnail(book.thumbnail_path) then
+            book.resolved_thumbnail_path = book.thumbnail_path
+            return book.thumbnail_path
+        end
+        -- Handle /mnt/us/ vs /mnt/base-us/ path differences on modern Kindles
+        if book.thumbnail_path:sub(1, 8) == "/mnt/us/" then
+            local alt = "/mnt/base-us/" .. book.thumbnail_path:sub(9)
+            if isValidThumbnail(alt) then
+                book.resolved_thumbnail_path = alt
+                return alt
+            end
+        elseif book.thumbnail_path:sub(1, 13) == "/mnt/base-us/" then
+            local alt = "/mnt/us/" .. book.thumbnail_path:sub(14)
+            if isValidThumbnail(alt) then
+                book.resolved_thumbnail_path = alt
+                return alt
+            end
+        end
+    end
+
+    -- 2. Fallbacks for system/thumbnails/ and system/bookcovers/
+    local prefixes = { "/mnt/us", "/mnt/base-us" }
+    local keys = {}
+    if book.cde_key and book.cde_key ~= "" then
+        table.insert(keys, book.cde_key)
+    end
+    if book.uuid and book.uuid ~= "" then
+        table.insert(keys, book.uuid)
+    end
+    if book.id and book.id:sub(1, 3) == "cc:" then
+        table.insert(keys, book.id:sub(4))
+    end
+
+    for _, prefix in ipairs(prefixes) do
+        for _, key in ipairs(keys) do
+            local candidates = {
+                prefix .. "/system/thumbnails/thumbnail_" .. key .. "_EBOK_portrait.jpg",
+                prefix .. "/system/thumbnails/thumbnail_" .. key .. "_portrait.jpg",
+                prefix .. "/system/thumbnails/thumbnail_" .. key .. "_PDOC_portrait.jpg",
+            }
+            for _, cand in ipairs(candidates) do
+                if isValidThumbnail(cand) then
+                    book.resolved_thumbnail_path = cand
+                    return cand
+                end
+            end
+        end
+
+        local bookcovers_dir = prefix .. "/system/bookcovers"
+        local battr = lfs.attributes(bookcovers_dir)
+        if battr and battr.mode == "directory" then
+            for entry in lfs.dir(bookcovers_dir) do
+                if entry ~= "." and entry ~= ".." then
+                    local sub = bookcovers_dir .. "/" .. entry
+                    local sattr = lfs.attributes(sub)
+                    if sattr and sattr.mode == "directory" then
+                        for _, key in ipairs(keys) do
+                            for f in lfs.dir(sub) do
+                                if f:find(key, 1, true) and f:match("%.jpe?g$") then
+                                    local match_path = sub .. "/" .. f
+                                    if isValidThumbnail(match_path) then
+                                        book.resolved_thumbnail_path = match_path
+                                        return match_path
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
 function VirtualLibrary:createVirtualFolderEntry(parent_path)
     local entry = {
         text = self.VIRTUAL_LIBRARY_NAME .. "/",

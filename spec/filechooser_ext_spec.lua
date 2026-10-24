@@ -432,4 +432,29 @@ describe("FileChooserExt native catalog hooks", function()
         assert.is_true(fc:onMenuSelect({ path = fixture.subdir }))
         assert.equals(fixture.subdir, fc.path)
     end)
+
+    it("hooks and restores BookInfoManager methods on apply and unapply", function()
+        local orig_bookinfo = {
+            getBookInfo = function()
+                return { _no_provider = true }
+            end,
+            extractBooksInDirectory = function()
+                return "original_extract"
+            end,
+        }
+        package.loaded["bookinfomanager"] = orig_bookinfo
+
+        local fixture = build_fixture()
+        FileChooserExt:apply(FileChooser)
+
+        assert.is_not_equals(orig_bookinfo.getBookInfo, package.loaded["bookinfomanager"].getBookInfo)
+        assert.is_not_equals(orig_bookinfo.extractBooksInDirectory, package.loaded["bookinfomanager"].extractBooksInDirectory)
+
+        FileChooserExt:unapply(FileChooser)
+
+        assert.equals(orig_bookinfo.getBookInfo, package.loaded["bookinfomanager"].getBookInfo)
+        assert.equals(orig_bookinfo.extractBooksInDirectory, package.loaded["bookinfomanager"].extractBooksInDirectory)
+
+        package.loaded["bookinfomanager"] = nil
+    end)
 end)

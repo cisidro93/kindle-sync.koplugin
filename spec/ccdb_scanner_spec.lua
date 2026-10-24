@@ -71,6 +71,7 @@ describe("CcDbScanner", function()
                 p_isArchived = { "0" },
                 p_diskUsage = { "1048576" },
                 p_contentSize = { "900000" },
+                p_thumbnail = { "/mnt/us/system/thumbnails/thumbnail_B00TEST_EBOK_portrait.jpg" },
             }, 1)
 
             local scanner = CcDbScanner:new()
@@ -81,14 +82,38 @@ describe("CcDbScanner", function()
 
             local book = books[1]
             assert.equals("cc:abc-123", book.id)
+            assert.equals("abc-123", book.uuid)
             assert.equals("/mnt/us/documents/Downloads/Items01/Book_B00TEST.kfx", book.source_path)
             assert.equals("The Test Book", book.title)
             assert.equals("Test Book The", book.sort_key)
             assert.same({ "Test Author" }, book.authors)
             assert.equals("convert", book.open_mode)
             assert.equals("B00TEST", book.cde_key)
+            assert.equals("/mnt/us/system/thumbnails/thumbnail_B00TEST_EBOK_portrait.jpg", book.thumbnail_path)
             assert.is_nil(book.block_reason)
             assert.is_truthy(SQ3._getMock().executed[1]:find("ORDER BY p_titles_0_collation", 1, true))
+        end)
+
+        it("should normalize relative thumbnail paths", function()
+            SQ3._setMockResults({
+                p_uuid = { "rel-thumb" },
+                p_location = { "/mnt/us/documents/rel.kfx" },
+                p_titles_0_nominal = { "Relative Thumb" },
+                j_credits = { "" },
+                p_mimeType = { "application/x-kfx-ebook" },
+                p_cdeKey = { "B00REL" },
+                p_isDRMProtected = { "0" },
+                p_isArchived = { "0" },
+                p_diskUsage = { "100" },
+                p_contentSize = { "100" },
+                p_thumbnail = { "system/thumbnails/thumb.jpg" },
+            }, 1)
+
+            local scanner = CcDbScanner:new()
+            local books = scanner:scan()
+            assert.is_not_nil(books)
+            assert.equals(1, #books)
+            assert.equals("/mnt/us/system/thumbnails/thumb.jpg", books[1].thumbnail_path)
         end)
 
         it("should block books without a local file (cloud-only)", function()
