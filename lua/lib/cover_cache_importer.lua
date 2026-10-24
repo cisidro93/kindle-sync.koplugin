@@ -2,6 +2,7 @@ local Blitbuffer = require("ffi/blitbuffer")
 local DataStorage = require("datastorage")
 local RenderImage = require("ui/renderimage")
 local SQ3 = require("lua-ljsqlite3/init")
+local ffi = require("ffi")
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
 local util = require("util")
@@ -195,6 +196,43 @@ local function insertCoverRow(insert_stmt, path, book, cover_data)
     insert_stmt:step()
 end
 
+--- Enhance color saturation and contrast for color e-ink (Colorsoft / Kaleido 3).
+--- @param cover_bb table: BlitBuffer
+--- @param saturation number|nil: factor e.g. 1.25 (+25% vibrance)
+local function enhanceColorsoftVibrance(cover_bb, saturation)
+    if not cover_bb or type(cover_bb.getType) ~= "function" or cover_bb:getType() ~= Blitbuffer.TYPE_BBRGBA_32 then
+        return
+    end
+
+    local s = saturation or 1.25
+    local w = cover_bb.w
+    local h = cover_bb.h
+    local stride = tonumber(cover_bb.stride)
+    local ok, data_ptr = pcall(ffi.cast, "uint8_t*", cover_bb.data)
+    if not ok or not data_ptr then
+        return
+    end
+
+    for y = 0, h - 1 do
+        local row_offset = y * stride
+        for x = 0, w - 1 do
+            local idx = row_offset + x * 4
+            local r = data_ptr[idx]
+            local g = data_ptr[idx + 1]
+            local b = data_ptr[idx + 2]
+
+            local lum = 0.299 * r + 0.587 * g + 0.114 * b
+            local new_r = lum + (r - lum) * s
+            local new_g = lum + (g - lum) * s
+            local new_b = lum + (b - lum) * s
+
+            data_ptr[idx] = new_r < 0 and 0 or (new_r > 255 and 255 or new_r)
+            data_ptr[idx + 1] = new_g < 0 and 0 or (new_g > 255 and 255 or new_g)
+            data_ptr[idx + 2] = new_b < 0 and 0 or (new_b > 255 and 255 or new_b)
+        end
+    end
+end
+
 --- Import and cache cover for a single Kindle book.
 --- @param book table
 --- @param cover_specs table|nil
@@ -225,6 +263,9 @@ function CoverCacheImporter:importBookCover(book, cover_specs, target_path)
         local scaled_h = math.max(1, math.floor(orig_h * scale))
         cover_bb = RenderImage:scaleBlitBuffer(cover_bb, scaled_w, scaled_h, true)
     end
+
+    -- Boost color vibrance for Kindle Colorsoft (Kaleido 3 color e-ink)
+    enhanceColorsoftVibrance(cover_bb, 1.25)
 
     local cover_stride = tonumber(cover_bb.stride)
     local cover_h = cover_bb.h

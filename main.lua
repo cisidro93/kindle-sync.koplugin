@@ -19,11 +19,13 @@ local CacheManager = require("lua/cache_manager")
 local FileChooserExt = require("lua/filechooser_ext")
 local HelperClient = require("lua/helper_client")
 local KindleClippingsParser = require("lua/lib/kindle_clippings_parser")
+local KindleCollectionsSync = require("lua/lib/kindle_collections_sync")
 local KindleHighlightImporter = require("lua/lib/kindle_highlight_importer")
 local KindleHighlightsViewer = require("lua/lib/kindle_highlights_viewer")
 local KindleLibrary = require("lua/kindle_library")
 local LibraryIndex = require("lua/library_index")
 local OpenFileExt = require("lua/open_file_ext")
+local ReadingGoalTracker = require("lua/lib/reading_goal_tracker")
 local ReadingStateSync = require("lua/reading_state_sync")
 local SyncDecisionMaker = require("lua/lib/sync_decision_maker")
 local VirtualLibrary = require("lua/virtual_library")
@@ -91,6 +93,11 @@ local KindlePlugin = WidgetContainer:extend({
     is_doc_only = false,
     default_settings = default_settings,
 })
+
+local collections_sync = KindleCollectionsSync:new(virtual_library)
+local reading_goal_tracker = ReadingGoalTracker:new(KindlePlugin)
+kindle_library.collections_sync = collections_sync
+kindle_library.reading_goal_tracker = reading_goal_tracker
 
 local function getMappedBook(document)
     local path = document and document.file
@@ -359,6 +366,9 @@ end
 --- This is the earliest native lifecycle point where an automatic exact pull can
 --- be acknowledged without confusing "requested" with "actually displayed".
 function KindlePlugin:onReaderReady()
+    if reading_goal_tracker then
+        reading_goal_tracker:startSession()
+    end
     if self.ui and self.ui.document then
         reading_state_sync:verifyOpenedKOReaderPosition(self.ui, self.ui.document.file)
     end
@@ -441,6 +451,9 @@ end
 --- after ReaderRolling has written its final XPointer/percent. In the uncommon
 --- ReaderUI path that saves before CloseDocument, push immediately instead.
 function KindlePlugin:onCloseDocument()
+    if reading_goal_tracker then
+        reading_goal_tracker:endSession()
+    end
     if
         not self.settings.sync_reading_state
         or not reading_state_sync:isAutomaticSyncEnabled()
@@ -1132,6 +1145,69 @@ function KindlePlugin:createPrepareAllBooksMenuItem()
     }
 end
 
+--- Creates Reading Goals menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createReadingGoalsMenuItem()
+    local data = reading_goal_tracker and reading_goal_tracker:getData() or {}
+    local streak = data.streak_days or 0
+    local streak_str = streak > 0 and (" (" .. streak .. "-day streak 🔥)") or ""
+    return {
+        text = T(_("Daily Goal: %1/%2 mins%3"), data.today_minutes or 0, data.target_minutes or 30, streak_str),
+        help_text = _("View and configure your daily Kindle reading streak and goal progress."),
+        callback = function()
+            if reading_goal_tracker then
+                reading_goal_tracker:showDashboard()
+            end
+        end,
+    }
+end
+
+--- Creates Sync Kindle Collections menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createSyncCollectionsMenuItem()
+    return {
+        text = _("Sync Kindle Collections"),
+        help_text = _("Imports Amazon Kindle collections and reading lists into KOReader collections."),
+        callback = function()
+            local colls, books, err = collections_sync:syncToKOReader()
+            if colls and colls > 0 then
+                self:showInfo(T(_("Successfully synced %1 Kindle collections (%2 books) to KOReader."), colls, books), 4)
+            else
+                self:showInfo(err or _("No Kindle collections found in cc.db."))
+            end
+        end,
+    }
+end
+
+--- Creates Whispersync status menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createWhispersyncStatusMenuItem()
+    local last_time = self.last_whispersync_time
+    local status_text
+    if last_time then
+        local elapsed = os.time() - last_time
+        local mins = math.floor(elapsed / 60)
+        if mins < 1 then
+            status_text = _("Synced just now")
+        elseif mins == 1 then
+            status_text = _("Synced 1 min ago")
+        else
+            status_text = T(_("Synced %1 mins ago"), mins)
+        end
+    else
+        status_text = _("Active • Tap to sync")
+    end
+    return {
+        text = T(_("Whispersync: %1"), status_text),
+        help_text = _("Triggers an immediate Whispersync cloud sync with Amazon to update reading streaks and goals."),
+        callback = function()
+            self:triggerKindleCloudSync()
+            self.last_whispersync_time = os.time()
+            self:showInfo(_("Whispersync cloud sync triggered with Amazon."), 3)
+        end,
+    }
+end
+
 --- Creates Kindle highlights viewer menu item.
 --- @return table: Menu item configuration.
 function KindlePlugin:createKindleHighlightsMenuItem()
@@ -1172,9 +1248,6 @@ function KindlePlugin:addToMainMenu(menu_items)
     local sub_item_table = {
         self:createBrowseLibraryMenuItem(),
         self:createRefreshLibraryMenuItem(),
-        self:createKindleHighlightsMenuItem(),
-        self:createCacheAllCoversMenuItem(),
-        self:createPrepareAllBooksMenuItem(),
         self:createClearKeysMenuItem(),
         self:createClearCacheMenuItem(),
         self:createVirtualLibraryToggleMenuItem(),
@@ -1183,6 +1256,12 @@ function KindlePlugin:addToMainMenu(menu_items)
         self:createManualSyncMenuItem(),
         self:createSyncBehaviorMenuItem(),
         self:createSyncCurrentBookMenuItem(),
+        self:createPrepareAllBooksMenuItem(),
+        self:createCacheAllCoversMenuItem(),
+        self:createReadingGoalsMenuItem(),
+        self:createWhispersyncStatusMenuItem(),
+        self:createKindleHighlightsMenuItem(),
+        self:createSyncCollectionsMenuItem(),
         self:createCacheInfoMenuItem(),
         self:createAboutMenuItem(),
     }
