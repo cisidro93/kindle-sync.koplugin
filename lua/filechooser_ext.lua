@@ -12,6 +12,17 @@ local FileChooserExt = {
     kindle_library = nil,
 }
 
+local function normalizeKindlePath(p)
+    if type(p) ~= "string" then
+        return nil
+    end
+    p = p:gsub("^/mnt/base%-us", "/mnt/us"):gsub("/+$", "")
+    if p == "" then
+        return "/"
+    end
+    return p
+end
+
 local function shouldAddLibraryFolder(fc_self, path)
     if not FileChooserExt.applied or not fc_self or fc_self.name ~= "filemanager" then
         return false
@@ -23,7 +34,10 @@ local function shouldAddLibraryFolder(fc_self, path)
         return true
     end
     local home_dir = G_reader_settings:readSetting("home_dir") or Device.home_dir
-    return home_dir ~= nil and path == home_dir
+    if home_dir ~= nil and (path == home_dir or normalizeKindlePath(path) == normalizeKindlePath(home_dir)) then
+        return true
+    end
+    return false
 end
 
 local function findInsertPosition(item_table)
@@ -131,11 +145,10 @@ function FileChooserExt:apply(FileChooser)
     install("onMenuSelect", function(chooser, item)
         if isInstalled() and chooser.name == "filemanager" and item then
             if item.is_kindle_library_folder then
-                if self.kindle_library and self.kindle_library.home_dashboard then
-                    self.kindle_library.home_dashboard:show()
-                    return true
-                end
                 self.kindle_library:show(chooser.ui, true)
+                if self.kindle_library and self.kindle_library.home_dashboard then
+                    pcall(self.kindle_library.home_dashboard.show, self.kindle_library.home_dashboard)
+                end
                 return true
             elseif self.kindle_library:isBrowsing(chooser) then
                 if item.is_kindle_library_return then
@@ -152,11 +165,10 @@ function FileChooserExt:apply(FileChooser)
     install("onMenuHold", function(chooser, item)
         if isInstalled() and chooser.name == "filemanager" and item then
             if item.is_kindle_library_folder then
-                if self.kindle_library and self.kindle_library.home_dashboard then
-                    self.kindle_library.home_dashboard:show()
-                    return true
-                end
                 self.kindle_library:show(chooser.ui, true)
+                if self.kindle_library and self.kindle_library.home_dashboard then
+                    pcall(self.kindle_library.home_dashboard.show, self.kindle_library.home_dashboard)
+                end
                 return true
             elseif self.kindle_library:isBrowsing(chooser) and item.kindle_unavailable then
                 return self.kindle_library:openItem(item)

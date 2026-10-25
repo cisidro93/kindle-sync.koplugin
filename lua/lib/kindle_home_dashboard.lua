@@ -91,7 +91,12 @@ function KindleHomeDashboard:show()
                 end
                 local open_path = last_book.source_path or last_book.cached_path
                 if open_path then
-                    require("apps/filemanager/filemanagerutil").openFile(open_path)
+                    local ui = (self.kindle_library and self.kindle_library.ui) or (self.plugin and self.plugin.ui)
+                    if ui then
+                        require("apps/filemanager/filemanagerutil").openFile(ui, open_path)
+                    else
+                        require("apps/filemanager/filemanagerutil").openFile(open_path)
+                    end
                 end
             end,
         })
@@ -120,6 +125,22 @@ function KindleHomeDashboard:show()
     table.insert(items, {
         text = T(_("📚 Kindle Library (%1 books)"), #all_books),
         help_text = _("Browse all your Kindle books with high-resolution covers and progress."),
+        callback = function()
+            local ui = (self.kindle_library and self.kindle_library.ui) or (self.plugin and self.plugin.ui)
+            if self.kindle_library and ui and ui.file_chooser and type(self.kindle_library.show) == "function" then
+                if self.active_menu then
+                    UIManager:close(self.active_menu)
+                end
+                if self.kindle_library:show(ui, false) then
+                    return
+                end
+            end
+            self:showLibraryCatalog(_("Kindle Library"), all_books)
+        end,
+    })
+    table.insert(items, {
+        text = T(_("📋 Quick Book List (%1 books)"), #all_books),
+        help_text = _("Fast text list of all Kindle books with progress and comic badges."),
         callback = function()
             self:showLibraryCatalog(_("Kindle Library"), all_books)
         end,
@@ -242,7 +263,12 @@ function KindleHomeDashboard:showLibraryCatalog(title, book_list)
                     end
                 end
                 if open_path then
-                    require("apps/filemanager/filemanagerutil").openFile(open_path)
+                    local ui = (self.kindle_library and self.kindle_library.ui) or (self.plugin and self.plugin.ui)
+                    if ui then
+                        require("apps/filemanager/filemanagerutil").openFile(ui, open_path)
+                    else
+                        require("apps/filemanager/filemanagerutil").openFile(open_path)
+                    end
                 end
             end,
         })

@@ -24,8 +24,14 @@ local function getYesterdayString()
     return os.date("%Y-%m-%d", os.time() - 86400)
 end
 
+local function safeSavePluginSettings(plugin)
+    if plugin and type(plugin.saveSettings) == "function" and type(plugin.settings) == "table" then
+        pcall(plugin.saveSettings, plugin)
+    end
+end
+
 function ReadingGoalTracker:getData()
-    local settings = self.plugin and self.plugin.settings or {}
+    local settings = (self.plugin and type(self.plugin.settings) == "table") and self.plugin.settings or {}
     local data = settings.reading_goals
     if not data or type(data) ~= "table" then
         data = {
@@ -36,6 +42,9 @@ function ReadingGoalTracker:getData()
             last_day = getTodayString(),
         }
         if self.plugin then
+            if type(self.plugin.settings) ~= "table" then
+                self.plugin.settings = {}
+            end
             self.plugin.settings.reading_goals = data
         end
     end
@@ -57,9 +66,7 @@ function ReadingGoalTracker:getData()
         end
         data.today_minutes = 0
         data.last_day = today
-        if self.plugin then
-            self.plugin:saveSettings()
-        end
+        safeSavePluginSettings(self.plugin)
     end
 
     return data
@@ -106,9 +113,7 @@ function ReadingGoalTracker:recordMinutes(minutes)
         }))
     end
 
-    if self.plugin then
-        self.plugin:saveSettings()
-    end
+    safeSavePluginSettings(self.plugin)
 
     logger.info("ReadingGoalTracker: recorded", minutes, "mins, today total:", data.today_minutes, "streak:", data.streak_days)
     return data.today_minutes
@@ -160,9 +165,7 @@ function ReadingGoalTracker:showDashboard()
                     text = _("Set Target (15m)"),
                     callback = function()
                         data.target_minutes = 15
-                        if self.plugin then
-                            self.plugin:saveSettings()
-                        end
+                        safeSavePluginSettings(self.plugin)
                         UIManager:close(dashboard)
                         self:showDashboard()
                     end,
@@ -171,9 +174,7 @@ function ReadingGoalTracker:showDashboard()
                     text = _("Set Target (30m)"),
                     callback = function()
                         data.target_minutes = 30
-                        if self.plugin then
-                            self.plugin:saveSettings()
-                        end
+                        safeSavePluginSettings(self.plugin)
                         UIManager:close(dashboard)
                         self:showDashboard()
                     end,
@@ -182,9 +183,7 @@ function ReadingGoalTracker:showDashboard()
                     text = _("Set Target (45m)"),
                     callback = function()
                         data.target_minutes = 45
-                        if self.plugin then
-                            self.plugin:saveSettings()
-                        end
+                        safeSavePluginSettings(self.plugin)
                         UIManager:close(dashboard)
                         self:showDashboard()
                     end,
@@ -193,9 +192,7 @@ function ReadingGoalTracker:showDashboard()
                     text = _("Set Target (60m)"),
                     callback = function()
                         data.target_minutes = 60
-                        if self.plugin then
-                            self.plugin:saveSettings()
-                        end
+                        safeSavePluginSettings(self.plugin)
                         UIManager:close(dashboard)
                         self:showDashboard()
                     end,

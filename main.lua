@@ -133,6 +133,12 @@ end
 --- needed by the current KOReader context.
 function KindlePlugin:init()
     self:loadSettings()
+    reading_goal_tracker.plugin = self
+    manga_mode.plugin = self
+    home_dashboard.plugin = self
+    self.reading_goal_tracker = reading_goal_tracker
+    self.manga_mode = manga_mode
+    self.home_dashboard = home_dashboard
     self.ui.menu:registerToMainMenu(self)
     self:onDispatcherRegisterActions()
 
@@ -190,14 +196,23 @@ function KindlePlugin:init()
         end
         if self.settings.enable_kindle_os ~= false then
             local filemanager_ui = self.ui
-            if type(filemanager_ui.registerPostInitCallback) == "function" then
-                filemanager_ui:registerPostInitCallback(function()
+            if filemanager_ui and not filemanager_ui.document then
+                local function launchStartupDashboard()
                     UIManager:nextTick(function()
                         if home_dashboard and not filemanager_ui.document then
-                            home_dashboard:show()
+                            home_dashboard.plugin = self
+                            local ok, err = pcall(home_dashboard.show, home_dashboard)
+                            if not ok then
+                                logger.warn("KindlePlugin: failed to show KindleOS dashboard:", err)
+                            end
                         end
                     end)
-                end)
+                end
+                if type(filemanager_ui.registerPostInitCallback) == "function" then
+                    filemanager_ui:registerPostInitCallback(launchStartupDashboard)
+                else
+                    launchStartupDashboard()
+                end
             end
         end
     end
@@ -1201,7 +1216,15 @@ end
 --- Creates Reading Goals menu item.
 --- @return table: Menu item configuration.
 function KindlePlugin:createReadingGoalsMenuItem()
-    local data = reading_goal_tracker and reading_goal_tracker:getData() or {}
+    if reading_goal_tracker then
+        reading_goal_tracker.plugin = self
+    end
+    local ok, data = pcall(function()
+        return reading_goal_tracker and reading_goal_tracker:getData() or {}
+    end)
+    if not ok or type(data) ~= "table" then
+        data = {}
+    end
     local streak = data.streak_days or 0
     local streak_str = streak > 0 and (" (" .. streak .. "-day streak 🔥)") or ""
     return {
@@ -1209,6 +1232,7 @@ function KindlePlugin:createReadingGoalsMenuItem()
         help_text = _("View and configure your daily Kindle reading streak and goal progress."),
         callback = function()
             if reading_goal_tracker then
+                reading_goal_tracker.plugin = self
                 reading_goal_tracker:showDashboard()
             end
         end,
@@ -1296,6 +1320,7 @@ function KindlePlugin:createKindleDashboardMenuItem()
         help_text = _("Open the all-in-one KindleOS dashboard with reading goals, library, and manga hub."),
         callback = function()
             if home_dashboard then
+                home_dashboard.plugin = self
                 home_dashboard:show()
             end
         end,
@@ -1309,9 +1334,12 @@ function KindlePlugin:createMangaModeMenuItem()
         text = _("Kindle Manga & Comic Mode"),
         help_text = _("Toggle automatic RTL reading flow, quadrant zoom, and comic contrast calibration."),
         checked_func = function()
-            return self.settings.enable_manga_mode ~= false
+            return self.settings and self.settings.enable_manga_mode ~= false
         end,
         callback = function()
+            if not self.settings then
+                self:loadSettings()
+            end
             self.settings.enable_manga_mode = not (self.settings.enable_manga_mode ~= false)
             self:saveSettings()
             if self.ui and self.ui.document and manga_mode then
@@ -1337,6 +1365,13 @@ end
 --- from either context.
 --- @param menu_items table: Main menu items table to populate.
 function KindlePlugin:addToMainMenu(menu_items)
+    if not self.settings then
+        self:loadSettings()
+    end
+    reading_goal_tracker.plugin = self
+    manga_mode.plugin = self
+    home_dashboard.plugin = self
+
     local sub_item_table = {
         self:createBrowseLibraryMenuItem(),
         self:createRefreshLibraryMenuItem(),
