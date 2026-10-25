@@ -109,7 +109,14 @@ function KindleHomeDashboard:show()
     })
 
     -- 3. Kindle Library Browser (All Books)
-    local all_books = self.virtual_library and self.virtual_library:getOrderedBooks() or {}
+    local all_books = {}
+    if self.virtual_library then
+        if type(self.virtual_library.getOrderedBooks) == "function" then
+            all_books = self.virtual_library:getOrderedBooks() or {}
+        elseif type(self.virtual_library.buildMappings) == "function" then
+            all_books = self.virtual_library:buildMappings(false) or {}
+        end
+    end
     table.insert(items, {
         text = T(_("📚 Kindle Library (%1 books)"), #all_books),
         help_text = _("Browse all your Kindle books with high-resolution covers and progress."),
@@ -148,7 +155,7 @@ function KindleHomeDashboard:show()
         help_text = _("View and export your clippings and highlights to Markdown."),
         callback = function()
             if self.highlights_viewer then
-                self.highlights_viewer:showAllHighlights()
+                self.highlights_viewer:show()
             end
         end,
     })
@@ -202,7 +209,6 @@ function KindleHomeDashboard:show()
     self.active_menu = Menu:new({
         title = title_str,
         item_table = items,
-        show_parent = self.active_menu,
     })
 
     UIManager:show(self.active_menu)

@@ -91,6 +91,11 @@ function VirtualLibrary:refresh(force)
     return self:buildMappings(force)
 end
 
+function VirtualLibrary:getOrderedBooks(force)
+    local books = self:buildMappings(force)
+    return books or {}
+end
+
 function VirtualLibrary:isActive()
     return self.settings.enable_virtual_library ~= false
 end
