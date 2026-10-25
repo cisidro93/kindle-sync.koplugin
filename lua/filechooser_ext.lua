@@ -131,6 +131,10 @@ function FileChooserExt:apply(FileChooser)
     install("onMenuSelect", function(chooser, item)
         if isInstalled() and chooser.name == "filemanager" and item then
             if item.is_kindle_library_folder then
+                if self.kindle_library and self.kindle_library.home_dashboard then
+                    self.kindle_library.home_dashboard:show()
+                    return true
+                end
                 self.kindle_library:show(chooser.ui, true)
                 return true
             elseif self.kindle_library:isBrowsing(chooser) then
@@ -148,6 +152,10 @@ function FileChooserExt:apply(FileChooser)
     install("onMenuHold", function(chooser, item)
         if isInstalled() and chooser.name == "filemanager" and item then
             if item.is_kindle_library_folder then
+                if self.kindle_library and self.kindle_library.home_dashboard then
+                    self.kindle_library.home_dashboard:show()
+                    return true
+                end
                 self.kindle_library:show(chooser.ui, true)
                 return true
             elseif self.kindle_library:isBrowsing(chooser) and item.kindle_unavailable then

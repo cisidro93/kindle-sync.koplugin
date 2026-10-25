@@ -188,16 +188,17 @@ function KindlePlugin:init()
                 end)
             end
         end
-    end
-
-    if self.settings.enable_kindle_os ~= false and self.ui and not self.ui.document then
-        local start_with = G_reader_settings and G_reader_settings:readSetting("start_with")
-        if start_with == "kindle_dashboard" or self.settings.start_with_dashboard then
-            UIManager:nextTick(function()
-                if home_dashboard then
-                    home_dashboard:show()
-                end
-            end)
+        if self.settings.enable_kindle_os ~= false then
+            local filemanager_ui = self.ui
+            if type(filemanager_ui.registerPostInitCallback) == "function" then
+                filemanager_ui:registerPostInitCallback(function()
+                    UIManager:nextTick(function()
+                        if home_dashboard and not filemanager_ui.document then
+                            home_dashboard:show()
+                        end
+                    end)
+                end)
+            end
         end
     end
 end
@@ -1361,7 +1362,7 @@ function KindlePlugin:addToMainMenu(menu_items)
 
     menu_items.kindle_plugin = {
         text = _("KindleOS"),
-        sorting_hint = "more_tools",
+        sorting_hint = "tools",
         separator = true,
         sub_item_table = sub_item_table,
     }
