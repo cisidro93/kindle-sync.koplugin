@@ -194,8 +194,7 @@ function FileChooserExt:apply(FileChooser)
         local klib = self.kindle_library
 
         BookInfoManager.getBookInfo = function(bim_self, filepath, get_cover)
-            local info = self.orig_getBookInfo(bim_self, filepath, get_cover)
-            if self.applied and info and info._no_provider and vlib then
+            if self.applied and vlib and filepath then
                 local book = vlib:getBook(filepath)
                 if book and klib and klib.cover_importer then
                     local cached = klib.cover_importer:getCachedBookInfo(filepath, get_cover)
@@ -205,12 +204,12 @@ function FileChooserExt:apply(FileChooser)
                     if get_cover then
                         local imported = klib.cover_importer:importBookCover(book, nil, filepath)
                         if imported then
-                            return klib.cover_importer:getCachedBookInfo(filepath, get_cover) or info
+                            return klib.cover_importer:getCachedBookInfo(filepath, get_cover)
                         end
                     end
                 end
             end
-            return info
+            return self.orig_getBookInfo(bim_self, filepath, get_cover)
         end
 
         BookInfoManager.extractBooksInDirectory = function(bim_self, path, cover_specs)

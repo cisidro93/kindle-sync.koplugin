@@ -16,13 +16,16 @@ local T = require("ffi/util").template
 local util = require("util")
 
 local CacheManager = require("lua/cache_manager")
+local ColorsoftEnhancer = require("lua/lib/colorsoft_enhancer")
 local FileChooserExt = require("lua/filechooser_ext")
 local HelperClient = require("lua/helper_client")
 local KindleClippingsParser = require("lua/lib/kindle_clippings_parser")
 local KindleCollectionsSync = require("lua/lib/kindle_collections_sync")
 local KindleHighlightImporter = require("lua/lib/kindle_highlight_importer")
 local KindleHighlightsViewer = require("lua/lib/kindle_highlights_viewer")
+local KindleHomeDashboard = require("lua/lib/kindle_home_dashboard")
 local KindleLibrary = require("lua/kindle_library")
+local KindleMangaMode = require("lua/lib/kindle_manga_mode")
 local LibraryIndex = require("lua/library_index")
 local OpenFileExt = require("lua/open_file_ext")
 local ReadingGoalTracker = require("lua/lib/reading_goal_tracker")
@@ -70,6 +73,9 @@ local default_settings = {
     create_missing_sidecar = true,
     trigger_cloud_sync = true,
     import_kindle_highlights = true,
+    enable_kindle_os = true,
+    enable_manga_mode = true,
+    enable_colorsoft_enhancements = true,
 }
 
 local helper_client = HelperClient:new()
@@ -96,8 +102,20 @@ local KindlePlugin = WidgetContainer:extend({
 
 local collections_sync = KindleCollectionsSync:new(virtual_library)
 local reading_goal_tracker = ReadingGoalTracker:new(KindlePlugin)
+local manga_mode = KindleMangaMode:new(KindlePlugin)
+local home_dashboard = KindleHomeDashboard:new(
+    KindlePlugin,
+    virtual_library,
+    kindle_library,
+    reading_goal_tracker,
+    collections_sync,
+    highlights_viewer,
+    manga_mode
+)
 kindle_library.collections_sync = collections_sync
 kindle_library.reading_goal_tracker = reading_goal_tracker
+kindle_library.manga_mode = manga_mode
+kindle_library.home_dashboard = home_dashboard
 
 local function getMappedBook(document)
     local path = document and document.file
@@ -169,6 +187,17 @@ function KindlePlugin:init()
                     end)
                 end)
             end
+        end
+    end
+
+    if self.settings.enable_kindle_os ~= false and self.ui and not self.ui.document then
+        local start_with = G_reader_settings and G_reader_settings:readSetting("start_with")
+        if start_with == "kindle_dashboard" or self.settings.start_with_dashboard then
+            UIManager:nextTick(function()
+                if home_dashboard then
+                    home_dashboard:show()
+                end
+            end)
         end
     end
 end
@@ -264,6 +293,10 @@ end
 --- applies the accepted state to the already-live ReaderUI instead.
 function KindlePlugin:onDocSettingsLoad(doc_settings, document)
     self._doc_settings_load_document = document and document.file or nil
+
+    if self.settings.enable_manga_mode ~= false and manga_mode then
+        manga_mode:onDocumentOpen(self.ui)
+    end
 
     local mapped_book = getMappedBook(document)
     if mapped_book and self.settings.import_kindle_highlights ~= false and highlight_importer then
@@ -451,6 +484,9 @@ end
 --- after ReaderRolling has written its final XPointer/percent. In the uncommon
 --- ReaderUI path that saves before CloseDocument, push immediately instead.
 function KindlePlugin:onCloseDocument()
+    if manga_mode then
+        manga_mode:onDocumentClose()
+    end
     if reading_goal_tracker then
         reading_goal_tracker:endSession()
     end
@@ -559,6 +595,22 @@ function KindlePlugin:onDispatcherRegisterActions()
         title = _("Kindle Library"),
         general = true,
     })
+    Dispatcher:registerAction("kindle_dashboard", {
+        category = "none",
+        event = "ShowKindleDashboard",
+        title = _("KindleOS Home Dashboard"),
+        general = true,
+    })
+end
+
+--- Shows the KindleOS Home Dashboard from any context.
+--- @return boolean
+function KindlePlugin:onShowKindleDashboard()
+    if home_dashboard then
+        home_dashboard:show()
+        return true
+    end
+    return false
 end
 
 --- Opens the native Kindle Library from any KOReader context.
@@ -1235,6 +1287,45 @@ function KindlePlugin:createCacheAllCoversMenuItem()
     }
 end
 
+--- Creates KindleOS Home Dashboard menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createKindleDashboardMenuItem()
+    return {
+        text = _("KindleOS Home Dashboard"),
+        help_text = _("Open the all-in-one KindleOS dashboard with reading goals, library, and manga hub."),
+        callback = function()
+            if home_dashboard then
+                home_dashboard:show()
+            end
+        end,
+    }
+end
+
+--- Creates Manga Mode toggle menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createMangaModeMenuItem()
+    return {
+        text = _("Kindle Manga & Comic Mode"),
+        help_text = _("Toggle automatic RTL reading flow, quadrant zoom, and comic contrast calibration."),
+        checked_func = function()
+            return self.settings.enable_manga_mode ~= false
+        end,
+        callback = function()
+            self.settings.enable_manga_mode = not (self.settings.enable_manga_mode ~= false)
+            self:saveSettings()
+            if self.ui and self.ui.document and manga_mode then
+                if self.settings.enable_manga_mode then
+                    manga_mode:onDocumentOpen(self.ui)
+                    self:showInfo(_("Kindle Manga Mode enabled."))
+                else
+                    manga_mode:onDocumentClose()
+                    self:showInfo(_("Kindle Manga Mode disabled."))
+                end
+            end
+        end,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Main menu registration
 -- ---------------------------------------------------------------------------
@@ -1257,11 +1348,13 @@ function KindlePlugin:addToMainMenu(menu_items)
         self:createSyncBehaviorMenuItem(),
         self:createSyncCurrentBookMenuItem(),
         self:createPrepareAllBooksMenuItem(),
+        self:createKindleDashboardMenuItem(),
         self:createCacheAllCoversMenuItem(),
         self:createReadingGoalsMenuItem(),
         self:createWhispersyncStatusMenuItem(),
         self:createKindleHighlightsMenuItem(),
         self:createSyncCollectionsMenuItem(),
+        self:createMangaModeMenuItem(),
         self:createCacheInfoMenuItem(),
         self:createAboutMenuItem(),
     }
