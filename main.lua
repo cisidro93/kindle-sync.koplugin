@@ -1360,7 +1360,7 @@ function KindlePlugin:addToMainMenu(menu_items)
     }
 
     menu_items.kindle_plugin = {
-        text = _("Kindle Library"),
+        text = _("KindleOS"),
         sorting_hint = "more_tools",
         separator = true,
         sub_item_table = sub_item_table,
