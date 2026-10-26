@@ -26,8 +26,12 @@ function KindleCollectionsSync:getKindleCollections()
     end
 
     local collections = {}
+    local collation_cleanup
     local ok, query_err = pcall(function()
-        KindleCatalogDb.installIcuCollation(conn)
+        local installed, cleanup = KindleCatalogDb.installIcuCollation(conn)
+        if installed and type(cleanup) == "function" then
+            collation_cleanup = cleanup
+        end
 
         -- 1. Fetch collection containers
         local coll_sql = [[
@@ -98,6 +102,9 @@ function KindleCollectionsSync:getKindleCollections()
     end)
 
     conn:close()
+    if collation_cleanup then
+        pcall(collation_cleanup)
+    end
 
     if not ok then
         return nil, "error querying Kindle collections: " .. tostring(query_err)

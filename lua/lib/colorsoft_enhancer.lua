@@ -1,12 +1,11 @@
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local ffi = require("ffi")
-local logger = require("logger")
 
 local ColorsoftEnhancer = {
     DEFAULT_SATURATION = 1.28, -- +28% color vibrance for Kaleido 3 CFA
-    DEFAULT_GAMMA = 0.88,      -- Counteract Kaleido 3 CFA light absorption
-    DEFAULT_CONTRAST = 1.15,   -- Deepen blacks on color e-paper
+    DEFAULT_GAMMA = 0.88, -- Counteract Kaleido 3 CFA light absorption
+    DEFAULT_CONTRAST = 1.15, -- Deepen blacks on color e-paper
 }
 
 --- Check if the current device is a Kindle Colorsoft (or color e-ink device).

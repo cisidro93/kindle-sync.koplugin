@@ -16,7 +16,6 @@ local T = require("ffi/util").template
 local util = require("util")
 
 local CacheManager = require("lua/cache_manager")
-local ColorsoftEnhancer = require("lua/lib/colorsoft_enhancer")
 local FileChooserExt = require("lua/filechooser_ext")
 local HelperClient = require("lua/helper_client")
 local KindleClippingsParser = require("lua/lib/kindle_clippings_parser")
@@ -32,6 +31,7 @@ local ReadingGoalTracker = require("lua/lib/reading_goal_tracker")
 local ReadingStateSync = require("lua/reading_state_sync")
 local SyncDecisionMaker = require("lua/lib/sync_decision_maker")
 local VirtualLibrary = require("lua/virtual_library")
+local ZlibraryGuard = require("lua/lib/zlibrary_guard")
 
 local SYNC_DIRECTION = {
     PROMPT = 1,
@@ -103,6 +103,7 @@ local KindlePlugin = WidgetContainer:extend({
 local collections_sync = KindleCollectionsSync:new(virtual_library)
 local reading_goal_tracker = ReadingGoalTracker:new(KindlePlugin)
 local manga_mode = KindleMangaMode:new(KindlePlugin)
+local zlibrary_guard = ZlibraryGuard:new(virtual_library, kindle_library)
 local home_dashboard = KindleHomeDashboard:new(
     KindlePlugin,
     virtual_library,
@@ -110,11 +111,13 @@ local home_dashboard = KindleHomeDashboard:new(
     reading_goal_tracker,
     collections_sync,
     highlights_viewer,
-    manga_mode
+    manga_mode,
+    zlibrary_guard
 )
 kindle_library.collections_sync = collections_sync
 kindle_library.reading_goal_tracker = reading_goal_tracker
 kindle_library.manga_mode = manga_mode
+kindle_library.zlibrary_guard = zlibrary_guard
 kindle_library.home_dashboard = home_dashboard
 
 local function getMappedBook(document)
@@ -136,9 +139,12 @@ function KindlePlugin:init()
     reading_goal_tracker.plugin = self
     manga_mode.plugin = self
     home_dashboard.plugin = self
+    home_dashboard.zlibrary_guard = zlibrary_guard
     self.reading_goal_tracker = reading_goal_tracker
     self.manga_mode = manga_mode
+    self.zlibrary_guard = zlibrary_guard
     self.home_dashboard = home_dashboard
+    zlibrary_guard:apply()
     self.ui.menu:registerToMainMenu(self)
     self:onDispatcherRegisterActions()
 
@@ -672,6 +678,7 @@ function KindlePlugin:stopPlugin()
     local FileChooser = require("ui/widget/filechooser")
     FileChooserExt:unapply(FileChooser)
     OpenFileExt:unapply()
+    zlibrary_guard:unapply()
     Dispatcher:removeAction(KINDLE_LIBRARY_ACTION)
     kindle_library:takeReturnToLibraryRequest()
     if self.ui and self.ui.file_chooser and self.ui.file_chooser.refreshPath then
@@ -1340,7 +1347,7 @@ function KindlePlugin:createMangaModeMenuItem()
             if not self.settings then
                 self:loadSettings()
             end
-            self.settings.enable_manga_mode = not (self.settings.enable_manga_mode ~= false)
+            self.settings.enable_manga_mode = self.settings.enable_manga_mode == false
             self:saveSettings()
             if self.ui and self.ui.document and manga_mode then
                 if self.settings.enable_manga_mode then
@@ -1350,6 +1357,20 @@ function KindlePlugin:createMangaModeMenuItem()
                     manga_mode:onDocumentClose()
                     self:showInfo(_("Kindle Manga Mode disabled."))
                 end
+            end
+        end,
+    }
+end
+
+--- Creates Z-Library Dedupe Guard search menu item.
+--- @return table: Menu item configuration.
+function KindlePlugin:createZlibraryGuardMenuItem()
+    return {
+        text = _("Search Kindle & Z-Library (Dedupe Guard)"),
+        help_text = _("Checks your Kindle library first before searching or downloading from Z-Library."),
+        callback = function()
+            if zlibrary_guard then
+                zlibrary_guard:showLibraryCheckDialog()
             end
         end,
     }
@@ -1371,6 +1392,7 @@ function KindlePlugin:addToMainMenu(menu_items)
     reading_goal_tracker.plugin = self
     manga_mode.plugin = self
     home_dashboard.plugin = self
+    home_dashboard.zlibrary_guard = zlibrary_guard
 
     local sub_item_table = {
         self:createBrowseLibraryMenuItem(),
@@ -1385,6 +1407,7 @@ function KindlePlugin:addToMainMenu(menu_items)
         self:createSyncCurrentBookMenuItem(),
         self:createPrepareAllBooksMenuItem(),
         self:createKindleDashboardMenuItem(),
+        self:createZlibraryGuardMenuItem(),
         self:createCacheAllCoversMenuItem(),
         self:createReadingGoalsMenuItem(),
         self:createWhispersyncStatusMenuItem(),

@@ -1,6 +1,4 @@
 local ColorsoftEnhancer = require("lua/lib/colorsoft_enhancer")
-local UIManager = require("ui/uimanager")
-local _ = require("gettext")
 local logger = require("logger")
 
 local KindleMangaMode = {}

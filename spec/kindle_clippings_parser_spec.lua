@@ -5,7 +5,6 @@ local helper = require("spec/test_helper")
 
 describe("KindleClippingsParser", function()
     local KindleClippingsParser
-    local lfs
 
     local SAMPLE_CLIPPINGS = [[
 The Chronicles of Narnia Complete 7-Book Collection (Lewis, C. S.)
@@ -33,7 +32,6 @@ My private note on this passage.
     setup(function()
         helper.setup_complete()
         KindleClippingsParser = require("lua/lib/kindle_clippings_parser")
-        lfs = require("libs/libkoreader-lfs")
     end)
 
     before_each(function()

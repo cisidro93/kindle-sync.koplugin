@@ -434,8 +434,6 @@ describe("VirtualLibrary native catalog rows", function()
     end)
 
     describe("getBookThumbnailPath", function()
-        local lfs = require("libs/libkoreader-lfs")
-
         it("resolves thumbnail_path directly when file exists and is valid size", function()
             local vlib = VirtualLibrary:new({})
             local thumb = "/mnt/us/system/thumbnails/test.jpg"

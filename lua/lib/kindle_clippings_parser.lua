@@ -1,5 +1,6 @@
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
+local util = require("util")
 
 local KindleClippingsParser = {}
 KindleClippingsParser.__index = KindleClippingsParser

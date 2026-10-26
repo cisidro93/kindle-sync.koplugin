@@ -45,9 +45,7 @@ local INSERT_SQL = "INSERT OR REPLACE INTO bookinfo ("
     .. string.rep("?,", #BOOKINFO_COLS - 1)
     .. "?);"
 
-local SELECT_SQL = "SELECT "
-    .. table.concat(BOOKINFO_COLS, ",")
-    .. " FROM bookinfo WHERE directory=? AND filename=? AND in_progress=0;"
+local SELECT_SQL = "SELECT " .. table.concat(BOOKINFO_COLS, ",") .. " FROM bookinfo WHERE directory=? AND filename=? AND in_progress=0;"
 
 function CoverCacheImporter:new(virtual_library, cache_manager)
     local instance = {

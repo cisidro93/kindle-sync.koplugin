@@ -5,12 +5,10 @@ local helper = require("spec/test_helper")
 
 describe("ColorsoftEnhancer", function()
     local ColorsoftEnhancer
-    local Blitbuffer
 
     setup(function()
         helper.setup_complete()
         ColorsoftEnhancer = require("lua/lib/colorsoft_enhancer")
-        Blitbuffer = require("ffi/blitbuffer")
     end)
 
     before_each(function()

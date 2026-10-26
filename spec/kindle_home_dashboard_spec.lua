@@ -5,10 +5,12 @@ local helper = require("spec/test_helper")
 
 describe("KindleHomeDashboard", function()
     local KindleHomeDashboard
+    local UIManager
 
     setup(function()
         helper.setup_complete()
         KindleHomeDashboard = require("lua/lib/kindle_home_dashboard")
+        UIManager = require("ui/uimanager")
     end)
 
     before_each(function()
@@ -31,5 +33,35 @@ describe("KindleHomeDashboard", function()
         local book = dashboard:getLastOpenedBook()
         assert.is_not_nil(book)
         assert.equals("TestBook", book.title)
+    end)
+
+    it("renders showLibraryCatalog safely when book.authors is a table or string", function()
+        local shown_widget
+        local orig_show = UIManager.show
+        UIManager.show = function(_, widget)
+            shown_widget = widget
+        end
+
+        local dashboard = KindleHomeDashboard:new({})
+        dashboard:showLibraryCatalog("Kindle Library", {
+            {
+                title = "Leviathan Wakes",
+                authors = { "James S. A. Corey", "Daniel Abraham" },
+                percent_finished = 42,
+                source_path = "/mnt/us/documents/Leviathan.kfx",
+            },
+            {
+                title = "Single Author String",
+                authors = "Isaac Asimov",
+                percent_finished = 0.75,
+                source_path = "/mnt/us/documents/Foundation.kfx",
+            },
+        })
+
+        UIManager.show = orig_show
+        assert.is_not_nil(shown_widget)
+        assert.equals(2, #shown_widget.item_table)
+        assert.is_truthy(shown_widget.item_table[1].text:find("James S. A. Corey, Daniel Abraham", 1, true))
+        assert.is_truthy(shown_widget.item_table[2].text:find("Isaac Asimov", 1, true))
     end)
 end)

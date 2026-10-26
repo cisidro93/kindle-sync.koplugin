@@ -1,9 +1,7 @@
-local BD = require("ui/bidi")
 local InfoMessage = require("ui/widget/infomessage")
 local TextViewer = require("ui/widget/textviewer")
 local UIManager = require("ui/uimanager")
 local logger = require("logger")
-local util = require("util")
 local _ = require("gettext")
 local T = require("ffi/util").template
 
@@ -125,7 +123,7 @@ end
 
 --- Display the library-wide highlights browser dialog.
 function KindleHighlightsViewer:show()
-    local list, by_book, err = self.clippings_parser:parseFile(true)
+    local list, by_book = self.clippings_parser:parseFile(true)
     if not list or #list == 0 then
         showInfo(_("No Kindle clippings found in /mnt/us/documents/My Clippings.txt"))
         return false

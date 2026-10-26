@@ -444,7 +444,7 @@ describe("FileChooserExt native catalog hooks", function()
         }
         package.loaded["bookinfomanager"] = orig_bookinfo
 
-        local fixture = build_fixture()
+        build_fixture()
         FileChooserExt:apply(FileChooser)
 
         assert.is_not_equals(orig_bookinfo.getBookInfo, package.loaded["bookinfomanager"].getBookInfo)
