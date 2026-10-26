@@ -434,26 +434,30 @@ describe("FileChooserExt native catalog hooks", function()
     end)
 
     it("hooks and restores BookInfoManager methods on apply and unapply", function()
+        build_fixture()
+        FileChooserExt:unapply(FileChooser)
+
+        local orig_get = function()
+            return { _no_provider = true }
+        end
+        local orig_extract = function()
+            return "original_extract"
+        end
         local orig_bookinfo = {
-            getBookInfo = function()
-                return { _no_provider = true }
-            end,
-            extractBooksInDirectory = function()
-                return "original_extract"
-            end,
+            getBookInfo = orig_get,
+            extractBooksInDirectory = orig_extract,
         }
         package.loaded["bookinfomanager"] = orig_bookinfo
 
-        build_fixture()
         FileChooserExt:apply(FileChooser)
 
-        assert.is_not_equals(orig_bookinfo.getBookInfo, package.loaded["bookinfomanager"].getBookInfo)
-        assert.is_not_equals(orig_bookinfo.extractBooksInDirectory, package.loaded["bookinfomanager"].extractBooksInDirectory)
+        assert.is_not_equals(orig_get, package.loaded["bookinfomanager"].getBookInfo)
+        assert.is_not_equals(orig_extract, package.loaded["bookinfomanager"].extractBooksInDirectory)
 
         FileChooserExt:unapply(FileChooser)
 
-        assert.equals(orig_bookinfo.getBookInfo, package.loaded["bookinfomanager"].getBookInfo)
-        assert.equals(orig_bookinfo.extractBooksInDirectory, package.loaded["bookinfomanager"].extractBooksInDirectory)
+        assert.equals(orig_get, package.loaded["bookinfomanager"].getBookInfo)
+        assert.equals(orig_extract, package.loaded["bookinfomanager"].extractBooksInDirectory)
 
         package.loaded["bookinfomanager"] = nil
     end)

@@ -215,8 +215,15 @@ function M.install_sqlite_mock()
         function statement:reset()
             return self
         end
+        function statement:clearbind()
+            return self
+        end
         function statement:bind(...)
             mock.bound_values = { ... }
+            return self
+        end
+        function statement:bind1(i, val)
+            mock.bound_values[i] = val
             return self
         end
         function statement:resultset()
@@ -234,6 +241,9 @@ function M.install_sqlite_mock()
     function SQ3.open(path)
         opened_path = path
         return connection
+    end
+    function SQ3.blob(ptr, size)
+        return { ptr, size }
     end
     function SQ3._setMockResults(new_rows, new_row_count)
         rows = new_rows

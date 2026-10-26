@@ -729,15 +729,9 @@ function ZlibraryGuard:installHooks()
     return self.hooks_installed
 end
 
---- Activate ZlibraryGuard and schedule post-init hook installation so it catches
---- zlibrary.koplugin even when loaded after kindle.koplugin.
+--- Activate ZlibraryGuard without scheduling background ticks during ReaderUI init.
 function ZlibraryGuard:apply()
     self:installHooks()
-    if not self.hooks_installed and UIManager and type(UIManager.nextTick) == "function" then
-        UIManager:nextTick(function()
-            self:installHooks()
-        end)
-    end
 end
 
 --- Restore original zlibrary.koplugin functions on plugin teardown.
@@ -794,7 +788,7 @@ function ZlibraryGuard:launchZlibrarySearch(initial_query)
         local ReaderUI = require("apps/reader/readerui")
         local host_ui = FileManager.instance or ReaderUI.instance
         if host_ui then
-            for _, plugin in pairs(host_ui) do
+            for __, plugin in pairs(host_ui) do
                 if type(plugin) == "table" and type(plugin.onZlibrarySearch) == "function" then
                     if initial_query and initial_query ~= "" then
                         ui_mod.showSearchDialog(plugin, initial_query)
@@ -910,7 +904,7 @@ function ZlibraryGuard:showCheckResults(query)
         end,
     })
 
-    for _, book in ipairs(matches) do
+    for __, book in ipairs(matches) do
         local title = book.title or _("Untitled")
         local authors_str = self.formatAuthors(book.authors or book.author)
         local author_suffix = authors_str ~= "" and (" — " .. authors_str) or ""

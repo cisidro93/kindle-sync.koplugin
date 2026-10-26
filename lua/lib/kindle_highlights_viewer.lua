@@ -42,14 +42,14 @@ function KindleHighlightsViewer:exportToMarkdown(by_book, output_path)
     table.sort(book_keys)
 
     local total_highlights = 0
-    for _, key in ipairs(book_keys) do
+    for __, key in ipairs(book_keys) do
         local entry = by_book[key]
         local title = entry.title or "Untitled"
         local author = entry.author or ""
         local clippings = entry.clippings or {}
 
         file:write("## " .. title .. (author ~= "" and (" — *" .. author .. "*") or "") .. "\n\n")
-        for _, clip in ipairs(clippings) do
+        for __, clip in ipairs(clippings) do
             total_highlights = total_highlights + 1
             local loc_str = ""
             if clip.page then
@@ -137,7 +137,7 @@ function KindleHighlightsViewer:show()
     end
     table.sort(book_keys)
 
-    for _, key in ipairs(book_keys) do
+    for __, key in ipairs(book_keys) do
         local entry = by_book[key]
         local title_display = entry.title
         if entry.author and entry.author ~= "" then

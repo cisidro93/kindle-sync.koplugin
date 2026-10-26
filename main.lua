@@ -73,7 +73,7 @@ local default_settings = {
     create_missing_sidecar = true,
     trigger_cloud_sync = true,
     import_kindle_highlights = true,
-    enable_kindle_os = true,
+    enable_kindle_os = false,
     enable_manga_mode = true,
     enable_colorsoft_enhancements = true,
 }
@@ -140,6 +140,9 @@ function KindlePlugin:init()
     manga_mode.plugin = self
     home_dashboard.plugin = self
     home_dashboard.zlibrary_guard = zlibrary_guard
+    if zlibrary_guard then
+        zlibrary_guard:installHooks()
+    end
     self.reading_goal_tracker = reading_goal_tracker
     self.manga_mode = manga_mode
     self.zlibrary_guard = zlibrary_guard
@@ -200,7 +203,7 @@ function KindlePlugin:init()
                 end)
             end
         end
-        if self.settings.enable_kindle_os ~= false then
+        if self.settings.enable_kindle_os == true then
             local filemanager_ui = self.ui
             if filemanager_ui and not filemanager_ui.document then
                 local function launchStartupDashboard()
@@ -1393,6 +1396,9 @@ function KindlePlugin:addToMainMenu(menu_items)
     manga_mode.plugin = self
     home_dashboard.plugin = self
     home_dashboard.zlibrary_guard = zlibrary_guard
+    if zlibrary_guard then
+        zlibrary_guard:installHooks()
+    end
 
     local sub_item_table = {
         self:createBrowseLibraryMenuItem(),

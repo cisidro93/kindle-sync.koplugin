@@ -51,7 +51,7 @@ end
 local function formatAuthors(authors)
     if type(authors) == "table" then
         local parts = {}
-        for _, a in ipairs(authors) do
+        for __, a in ipairs(authors) do
             if type(a) == "string" and a ~= "" then
                 table.insert(parts, a)
             end
@@ -207,7 +207,7 @@ function KindleHomeDashboard:show()
 
     -- 5. Comics & Manga Hub
     local comic_books = {}
-    for _, book in ipairs(all_books) do
+    for __, book in ipairs(all_books) do
         if self.manga_mode and self.manga_mode:isComicOrManga(book.source_path) then
             table.insert(comic_books, book)
         end
@@ -301,7 +301,7 @@ function KindleHomeDashboard:showLibraryCatalog(title, book_list)
     local items = {}
     local catalog_menu
 
-    for _, book in ipairs(book_list) do
+    for __, book in ipairs(book_list) do
         local book_title = tostring(book.title or _("Untitled"))
         local authors_str = formatAuthors(book.authors or book.author)
         local author = authors_str ~= "" and (" — " .. authors_str) or ""
@@ -371,13 +371,13 @@ function KindleHomeDashboard:showCollectionsMenu()
     end
 
     local items = {}
-    for _, coll in ipairs(collections) do
+    for __, coll in ipairs(collections) do
         local count = coll.books and #coll.books or 0
         table.insert(items, {
             text = T(_("📁 %1 (%2 books)"), coll.name, count),
             callback = safeCallback("Open Collection", function()
                 local books = {}
-                for _, path in ipairs(coll.books) do
+                for __, path in ipairs(coll.books) do
                     local b = self.virtual_library and self.virtual_library:getBook(path)
                     table.insert(books, b or { title = path:match("([^/]+)$"), source_path = path })
                 end
