@@ -49,7 +49,7 @@ function KindleHighlightsViewer:exportToMarkdown(by_book, output_path)
         local clippings = entry.clippings or {}
 
         file:write("## " .. title .. (author ~= "" and (" — *" .. author .. "*") or "") .. "\n\n")
-        for __, clip in ipairs(clippings) do
+        for __idx, clip in ipairs(clippings) do
             total_highlights = total_highlights + 1
             local loc_str = ""
             if clip.page then

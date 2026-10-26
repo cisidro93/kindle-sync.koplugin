@@ -377,7 +377,7 @@ function KindleHomeDashboard:showCollectionsMenu()
             text = T(_("📁 %1 (%2 books)"), coll.name, count),
             callback = safeCallback("Open Collection", function()
                 local books = {}
-                for __, path in ipairs(coll.books) do
+                for __idx, path in ipairs(coll.books) do
                     local b = self.virtual_library and self.virtual_library:getBook(path)
                     table.insert(books, b or { title = path:match("([^/]+)$"), source_path = path })
                 end
