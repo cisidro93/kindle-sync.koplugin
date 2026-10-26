@@ -21,23 +21,36 @@ function ColorsoftEnhancer:isColorsoftDevice()
     return false
 end
 
---- Apply real-time color vibrance and contrast curve to a 32-bit RGBA BlitBuffer.
+--- Apply real-time color vibrance and contrast curve to a 24-bit RGB or 32-bit RGB/RGBA BlitBuffer.
 --- Specially tuned for Kaleido 3 displays which absorb ~30% of reflected light.
 --- @param bb table: Blitbuffer
 --- @param saturation number|nil: Vibrance factor (default 1.28)
 --- @param contrast number|nil: Contrast factor (default 1.15)
 function ColorsoftEnhancer:enhanceBlitBuffer(bb, saturation, contrast)
-    if not bb or type(bb.getType) ~= "function" or bb:getType() ~= Blitbuffer.TYPE_BBRGBA_32 then
+    if not bb or type(bb.getType) ~= "function" then
+        return false
+    end
+
+    local bb_type = bb:getType()
+    local bpp
+    if bb_type == Blitbuffer.TYPE_BBRGB24 then
+        bpp = 3
+    elseif bb_type == Blitbuffer.TYPE_BBRGB32 or (Blitbuffer.TYPE_BBRGBA_32 and bb_type == Blitbuffer.TYPE_BBRGBA_32) then
+        bpp = 4
+    else
         return false
     end
 
     local sat = saturation or self.DEFAULT_SATURATION
     local con = contrast or self.DEFAULT_CONTRAST
-    local w = bb.w
-    local h = bb.h
+    local w = tonumber(bb.w)
+    local h = tonumber(bb.h)
     local stride = tonumber(bb.stride)
+    if not w or not h or not stride or w <= 0 or h <= 0 or stride < w * bpp or bb.data == nil then
+        return false
+    end
     local ok, data_ptr = pcall(ffi.cast, "uint8_t*", bb.data)
-    if not ok or not data_ptr then
+    if not ok or data_ptr == nil then
         return false
     end
 
@@ -47,7 +60,7 @@ function ColorsoftEnhancer:enhanceBlitBuffer(bb, saturation, contrast)
     for y = 0, h - 1 do
         local row_offset = y * stride
         for x = 0, w - 1 do
-            local idx = row_offset + x * 4
+            local idx = row_offset + x * bpp
             local r = data_ptr[idx]
             local g = data_ptr[idx + 1]
             local b = data_ptr[idx + 2]

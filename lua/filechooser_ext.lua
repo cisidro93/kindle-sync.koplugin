@@ -146,9 +146,6 @@ function FileChooserExt:apply(FileChooser)
         if isInstalled() and chooser.name == "filemanager" and item then
             if item.is_kindle_library_folder then
                 self.kindle_library:show(chooser.ui, true)
-                if self.kindle_library and self.kindle_library.home_dashboard then
-                    pcall(self.kindle_library.home_dashboard.show, self.kindle_library.home_dashboard)
-                end
                 return true
             elseif self.kindle_library:isBrowsing(chooser) then
                 if item.is_kindle_library_return then
@@ -224,7 +221,16 @@ function FileChooserExt:apply(FileChooser)
                     if get_cover then
                         local imported = klib.cover_importer:importBookCover(book, nil, filepath)
                         if imported then
-                            return klib.cover_importer:getCachedBookInfo(filepath, get_cover)
+                            local fresh = klib.cover_importer:getCachedBookInfo(filepath, get_cover)
+                            if fresh then
+                                return fresh
+                            end
+                        end
+                    end
+                    if type(klib.cover_importer.buildFallbackBookInfo) == "function" then
+                        local fallback = klib.cover_importer:buildFallbackBookInfo(book, filepath)
+                        if fallback then
+                            return fallback
                         end
                     end
                 end

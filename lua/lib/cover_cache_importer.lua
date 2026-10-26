@@ -120,18 +120,30 @@ function CoverCacheImporter:getCachedBookInfo(filepath, get_cover)
                 break
             end
             bookinfo.cover_bb = nil
-            if bookinfo.has_cover then
+            if bookinfo.has_cover == "Y" then
                 local bbtype = tonumber(row[i + 2])
                 local bbstride = tonumber(row[i + 3])
                 local cover_blob = row[i + 4]
-                if cover_blob and cover_blob[1] and cover_blob[2] then
-                    local cover_data, cover_size = zstd.zstd_uncompress_ctx(cover_blob[1], cover_blob[2])
-                    if cover_data then
+                if
+                    bbtype
+                    and bbstride
+                    and bookinfo.cover_w
+                    and bookinfo.cover_h
+                    and bookinfo.cover_w > 0
+                    and bookinfo.cover_h > 0
+                    and cover_blob
+                    and cover_blob[1]
+                    and cover_blob[2]
+                then
+                    local z_ok, cover_data, cover_size = pcall(zstd.zstd_uncompress_ctx, cover_blob[1], cover_blob[2])
+                    if z_ok and cover_data then
                         local expected_size = bbstride * bookinfo.cover_h
                         if cover_size == expected_size then
                             local cover_bb = Blitbuffer.new(bookinfo.cover_w, bookinfo.cover_h, bbtype, cover_data, bbstride, bookinfo.cover_w)
                             cover_bb:setAllocated(1)
                             bookinfo.cover_bb = cover_bb
+                        else
+                            pcall(ffi.C.free, cover_data)
                         end
                     end
                 end
@@ -145,12 +157,66 @@ function CoverCacheImporter:getCachedBookInfo(filepath, get_cover)
     return bookinfo
 end
 
+--- Build a fallback bookinfo metadata table from cc.db book metadata when no
+--- cached cover or local thumbnail JPEG is available. Prevents CoverBrowser from
+--- spawning background extraction subprocesses on .kfx files.
+--- @param book table
+--- @param filepath string
+--- @return table|nil
+function CoverCacheImporter:buildFallbackBookInfo(book, filepath)
+    if not book or not filepath or filepath == "" then
+        return nil
+    end
+    local directory, filename = util.splitFilePathName(filepath)
+    local attr = lfs.attributes(filepath)
+    local filesize = attr and attr.size or 0
+    local filemtime = attr and attr.modification or 0
+
+    local authors_str = nil
+    if type(book.authors) == "table" then
+        authors_str = table.concat(book.authors, ", ")
+    elseif type(book.authors) == "string" then
+        authors_str = book.authors
+    elseif type(book.author) == "string" then
+        authors_str = book.author
+    end
+
+    return {
+        directory = directory,
+        filename = filename,
+        filesize = filesize,
+        filemtime = filemtime,
+        in_progress = 0,
+        unsupported = nil,
+        cover_fetched = "Y",
+        has_meta = "Y",
+        has_cover = nil,
+        cover_sizetag = nil,
+        ignore_meta = nil,
+        ignore_cover = "Y",
+        pages = nil,
+        title = book.title or book.display_name,
+        authors = authors_str,
+        series = book.series,
+        series_index = book.series_index,
+        language = book.language,
+        keywords = nil,
+        description = book.description,
+        cover_w = nil,
+        cover_h = nil,
+        cover_bb = nil,
+    }
+end
+
 --- Insert a cover record into bookinfo_cache for a specific path.
 --- Note: lua-ljsqlite3 binds SQ3.blob with C.free as the SQLite destructor,
 --- so each bound row MUST receive its own freshly allocated zstd buffer!
 local function insertCoverRow(insert_stmt, path, book, cover_data)
-    local zst_ptr, zst_size = zstd.zstd_compress(cover_data.raw_data, cover_data.raw_size)
-    if not zst_ptr or zst_size <= 0 then
+    if cover_data.raw_data == nil or not cover_data.raw_size or cover_data.raw_size <= 0 then
+        return false
+    end
+    local z_ok, zst_ptr, zst_size = pcall(zstd.zstd_compress, cover_data.raw_data, cover_data.raw_size)
+    if not z_ok or not zst_ptr or not zst_size or zst_size <= 0 then
         return false
     end
 
@@ -203,26 +269,40 @@ local function insertCoverRow(insert_stmt, path, book, cover_data)
 end
 
 --- Enhance color saturation and contrast for color e-ink (Colorsoft / Kaleido 3).
+--- Supports both 24-bit RGB (TYPE_BBRGB24, 3 bytes/pixel) and 32-bit RGB/RGBA (TYPE_BBRGB32, 4 bytes/pixel).
 --- @param cover_bb table: BlitBuffer
 --- @param saturation number|nil: factor e.g. 1.25 (+25% vibrance)
 local function enhanceColorsoftVibrance(cover_bb, saturation)
-    if not cover_bb or type(cover_bb.getType) ~= "function" or cover_bb:getType() ~= Blitbuffer.TYPE_BBRGBA_32 then
+    if not cover_bb or type(cover_bb.getType) ~= "function" then
+        return
+    end
+
+    local bb_type = cover_bb:getType()
+    local bpp
+    if bb_type == Blitbuffer.TYPE_BBRGB24 then
+        bpp = 3
+    elseif bb_type == Blitbuffer.TYPE_BBRGB32 or (Blitbuffer.TYPE_BBRGBA_32 and bb_type == Blitbuffer.TYPE_BBRGBA_32) then
+        bpp = 4
+    else
         return
     end
 
     local s = saturation or 1.25
-    local w = cover_bb.w
-    local h = cover_bb.h
+    local w = tonumber(cover_bb.w)
+    local h = tonumber(cover_bb.h)
     local stride = tonumber(cover_bb.stride)
+    if not w or not h or not stride or w <= 0 or h <= 0 or stride < w * bpp or cover_bb.data == nil then
+        return
+    end
     local ok, data_ptr = pcall(ffi.cast, "uint8_t*", cover_bb.data)
-    if not ok or not data_ptr then
+    if not ok or data_ptr == nil then
         return
     end
 
     for y = 0, h - 1 do
         local row_offset = y * stride
         for x = 0, w - 1 do
-            local idx = row_offset + x * 4
+            local idx = row_offset + x * bpp
             local r = data_ptr[idx]
             local g = data_ptr[idx + 1]
             local b = data_ptr[idx + 2]

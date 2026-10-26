@@ -129,5 +129,22 @@ describe("CoverCacheImporter", function()
             assert.is_nil(err)
             assert.is_truthy(#SQ3._getMock().prepared_sql > 0)
         end)
+
+        it("builds fallback bookinfo metadata from cc.db when no thumbnail exists", function()
+            local importer = CoverCacheImporter:new(nil, nil)
+            local fallback = importer:buildFallbackBookInfo({
+                id = "cc:999",
+                title = "Fallback Title",
+                authors = { "Jane Doe", "John Smith" },
+                series = "Test Series",
+            }, "/mnt/us/documents/fallback.kfx")
+            assert.is_table(fallback)
+            assert.equals("Fallback Title", fallback.title)
+            assert.equals("Jane Doe, John Smith", fallback.authors)
+            assert.equals("Y", fallback.has_meta)
+            assert.equals("Y", fallback.cover_fetched)
+            assert.equals("Y", fallback.ignore_cover)
+            assert.equals(0, fallback.in_progress)
+        end)
     end)
 end)

@@ -869,7 +869,7 @@ function ZlibraryGuard:showCheckResults(query)
             buttons = {
                 {
                     {
-                        text = _('🌐 Search Z-Library for "%1"'):gsub("%%1", query),
+                        text = T(_('🌐 Search Z-Library for "%1"'), query),
                         callback = function()
                             UIManager:close(dialog)
                             self:launchZlibrarySearch(query)
