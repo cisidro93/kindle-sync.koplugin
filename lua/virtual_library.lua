@@ -57,6 +57,18 @@ local function sanitizeDisplayName(name)
     return cleaned ~= "" and cleaned or "Untitled"
 end
 
+local function getAlternateKindlePath(path)
+    if type(path) ~= "string" then
+        return nil
+    end
+    if path:sub(1, 8) == "/mnt/us/" then
+        return "/mnt/base-us/" .. path:sub(9)
+    elseif path:sub(1, 13) == "/mnt/base-us/" then
+        return "/mnt/us/" .. path:sub(14)
+    end
+    return nil
+end
+
 function VirtualLibrary:buildMappings(force)
     self.mapping_attempted = true
     local books, err = self.library_index:getBooks(force)
@@ -71,6 +83,10 @@ function VirtualLibrary:buildMappings(force)
         self.books_by_id[book.id] = book
         if book.source_path then
             self.books_by_real_path[book.source_path] = book
+            local alt_source = getAlternateKindlePath(book.source_path)
+            if alt_source then
+                self.books_by_real_path[alt_source] = book
+            end
         end
         -- Cache paths are deterministic even before the EPUB exists. Indexing
         -- them lets History/Collections and cold-start ReaderUI map a persisted
@@ -79,6 +95,10 @@ function VirtualLibrary:buildMappings(force)
             local cached_path = self.cache_manager:getCachePaths(book)
             if cached_path then
                 self.books_by_real_path[cached_path] = book
+                local alt_cached = getAlternateKindlePath(cached_path)
+                if alt_cached then
+                    self.books_by_real_path[alt_cached] = book
+                end
             end
         end
     end
@@ -105,7 +125,8 @@ function VirtualLibrary:getBook(path_or_id)
         return nil
     end
 
-    local book = self.books_by_id[path_or_id] or self.books_by_real_path[path_or_id]
+    local alt_path = getAlternateKindlePath(path_or_id)
+    local book = self.books_by_id[path_or_id] or self.books_by_real_path[path_or_id] or (alt_path and self.books_by_real_path[alt_path])
     if book then
         return book
     end
@@ -124,12 +145,13 @@ function VirtualLibrary:getBook(path_or_id)
             or path_or_id:match("^sha1:")
             or isPathWithin(path_or_id, cache_dir)
             or isPathWithin(path_or_id, self.KINDLE_DOCUMENTS_ROOT)
+            or (alt_path and isPathWithin(alt_path, self.KINDLE_DOCUMENTS_ROOT))
             or isKindleSourcePath(path_or_id)
         )
     if not self.mapping_attempted and should_build then
         local books = self:buildMappings(false)
         if books then
-            return self.books_by_id[path_or_id] or self.books_by_real_path[path_or_id]
+            return self.books_by_id[path_or_id] or self.books_by_real_path[path_or_id] or (alt_path and self.books_by_real_path[alt_path])
         end
     end
 
@@ -247,14 +269,21 @@ function VirtualLibrary:getBookThumbnailPath(book)
     -- 2. Fallbacks for system/thumbnails/ and system/bookcovers/
     local prefixes = { "/mnt/us", "/mnt/base-us" }
     local keys = {}
-    if book.cde_key and book.cde_key ~= "" then
-        table.insert(keys, book.cde_key)
+    local seen_keys = {}
+    local function addKey(k)
+        if type(k) == "string" and k ~= "" and not seen_keys[k] then
+            seen_keys[k] = true
+            table.insert(keys, k)
+        end
     end
-    if book.uuid and book.uuid ~= "" then
-        table.insert(keys, book.uuid)
+    addKey(book.cde_key)
+    if type(book.source_path) == "string" then
+        local file_key = book.source_path:match("_([A-Z0-9]+)%.[^.]+$")
+        addKey(file_key)
     end
+    addKey(book.uuid)
     if book.id and book.id:sub(1, 3) == "cc:" then
-        table.insert(keys, book.id:sub(4))
+        addKey(book.id:sub(4))
     end
 
     for _, prefix in ipairs(prefixes) do

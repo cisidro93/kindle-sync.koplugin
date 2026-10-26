@@ -149,7 +149,12 @@ function FileChooserExt:apply(FileChooser)
                 return true
             elseif self.kindle_library:isBrowsing(chooser) then
                 if item.is_kindle_library_return then
+                    local should_return_os = self.kindle_library.return_to_dashboard
+                    self.kindle_library.return_to_dashboard = nil
                     self.kindle_library:close()
+                    if should_return_os and self.kindle_library.home_dashboard then
+                        pcall(self.kindle_library.home_dashboard.show, self.kindle_library.home_dashboard)
+                    end
                     return true
                 elseif item.kindle_book_id and (item.kindle_unavailable or not chooser.ui.selected_files) then
                     return self.kindle_library:openItem(item)
@@ -183,7 +188,13 @@ function FileChooserExt:apply(FileChooser)
 
     install("goHome", function(chooser, ...)
         if isInstalled() and self.kindle_library:isBrowsing(chooser) then
+            local should_return_os = self.kindle_library.return_to_dashboard
+            self.kindle_library.return_to_dashboard = nil
             self.kindle_library:close()
+            if should_return_os and self.kindle_library.home_dashboard then
+                pcall(self.kindle_library.home_dashboard.show, self.kindle_library.home_dashboard)
+                return true
+            end
         end
         return original.goHome(chooser, ...)
     end)
@@ -191,7 +202,12 @@ function FileChooserExt:apply(FileChooser)
     for _, name in ipairs({ "onBack", "onFolderUp" }) do
         install(name, function(chooser, ...)
             if isInstalled() and self.kindle_library:isBrowsing(chooser) then
+                local should_return_os = self.kindle_library.return_to_dashboard
+                self.kindle_library.return_to_dashboard = nil
                 self.kindle_library:close()
+                if should_return_os and self.kindle_library.home_dashboard then
+                    pcall(self.kindle_library.home_dashboard.show, self.kindle_library.home_dashboard)
+                end
                 return true
             end
             return original[name](chooser, ...)
@@ -206,6 +222,8 @@ function FileChooserExt:apply(FileChooser)
     if ok and BookInfoManager then
         self.orig_getBookInfo = BookInfoManager.getBookInfo
         self.orig_extractBooksInDirectory = BookInfoManager.extractBooksInDirectory
+        self.orig_isCachedCoverInvalid = BookInfoManager.isCachedCoverInvalid
+        self.orig_extractInBackground = BookInfoManager.extractInBackground
 
         local vlib = self.virtual_library
         local klib = self.kindle_library
@@ -215,17 +233,18 @@ function FileChooserExt:apply(FileChooser)
                 local book = vlib:getBook(filepath)
                 if book and klib and klib.cover_importer then
                     local cached = klib.cover_importer:getCachedBookInfo(filepath, get_cover)
-                    if cached then
+                    if cached and not cached.unsupported and (not get_cover or cached.has_cover == "Y") then
                         return cached
                     end
-                    if get_cover then
-                        local imported = klib.cover_importer:importBookCover(book, nil, filepath)
-                        if imported then
-                            local fresh = klib.cover_importer:getCachedBookInfo(filepath, get_cover)
-                            if fresh then
-                                return fresh
-                            end
+                    local imported = klib.cover_importer:importBookCover(book, nil, filepath)
+                    if imported then
+                        local fresh = klib.cover_importer:getCachedBookInfo(filepath, get_cover)
+                        if fresh then
+                            return fresh
                         end
+                    end
+                    if cached and not cached.unsupported then
+                        return cached
                     end
                     if type(klib.cover_importer.buildFallbackBookInfo) == "function" then
                         local fallback = klib.cover_importer:buildFallbackBookInfo(book, filepath)
@@ -244,6 +263,37 @@ function FileChooserExt:apply(FileChooser)
                 return klib:extractAllCovers(cover_specs)
             end
             return self.orig_extractBooksInDirectory(bim_self, path, cover_specs)
+        end
+
+        if self.orig_isCachedCoverInvalid then
+            BookInfoManager.isCachedCoverInvalid = function(bookinfo, cover_specs)
+                if self.applied and bookinfo and bookinfo._is_kindle_cover then
+                    return false
+                end
+                return self.orig_isCachedCoverInvalid(bookinfo, cover_specs)
+            end
+        end
+
+        if self.orig_extractInBackground then
+            BookInfoManager.extractInBackground = function(bim_self, files)
+                if self.applied and vlib and klib and klib.cover_importer and type(files) == "table" then
+                    local remaining = {}
+                    for _, entry in ipairs(files) do
+                        local fp = type(entry) == "table" and entry.filepath or nil
+                        local book = fp and vlib:getBook(fp) or nil
+                        if book then
+                            klib.cover_importer:importBookCover(book, entry.cover_specs, fp)
+                        else
+                            table.insert(remaining, entry)
+                        end
+                    end
+                    if #remaining == 0 then
+                        return true
+                    end
+                    files = remaining
+                end
+                return self.orig_extractInBackground(bim_self, files)
+            end
         end
     end
 
@@ -269,6 +319,14 @@ function FileChooserExt:unapply(FileChooser)
         if self.orig_extractBooksInDirectory then
             BookInfoManager.extractBooksInDirectory = self.orig_extractBooksInDirectory
             self.orig_extractBooksInDirectory = nil
+        end
+        if self.orig_isCachedCoverInvalid then
+            BookInfoManager.isCachedCoverInvalid = self.orig_isCachedCoverInvalid
+            self.orig_isCachedCoverInvalid = nil
+        end
+        if self.orig_extractInBackground then
+            BookInfoManager.extractInBackground = self.orig_extractInBackground
+            self.orig_extractInBackground = nil
         end
     end
 

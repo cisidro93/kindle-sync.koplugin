@@ -73,6 +73,22 @@ function CoverCacheImporter:openDb()
     return conn
 end
 
+local function getAlternateKindlePath(path)
+    if type(path) ~= "string" then
+        return nil
+    end
+    if path:sub(1, 8) == "/mnt/us/" then
+        return "/mnt/base-us/" .. path:sub(9)
+    elseif path:sub(1, 13) == "/mnt/base-us/" then
+        return "/mnt/us/" .. path:sub(14)
+    elseif path == "/mnt/us" then
+        return "/mnt/base-us"
+    elseif path == "/mnt/base-us" then
+        return "/mnt/us"
+    end
+    return nil
+end
+
 --- Query cached cover directly from bookinfo_cache.sqlite3.
 --- @param filepath string
 --- @param get_cover boolean
@@ -100,12 +116,22 @@ function CoverCacheImporter:getCachedBookInfo(filepath, get_cover)
     stmt:bind(directory, filename)
     local row = stmt:step()
     if not row then
+        local alt_dir = getAlternateKindlePath(directory)
+        if alt_dir then
+            stmt:clearbind():reset()
+            stmt:bind(alt_dir, filename)
+            row = stmt:step()
+        end
+    end
+    if not row then
         stmt:close()
         conn:close()
         return nil
     end
 
-    local bookinfo = {}
+    local bookinfo = {
+        _is_kindle_cover = true,
+    }
     for i, col in ipairs(BOOKINFO_COLS) do
         if col == "pages" then
             bookinfo[col] = tonumber(row[i])
@@ -116,6 +142,11 @@ function CoverCacheImporter:getCachedBookInfo(filepath, get_cover)
         if col == "cover_w" then
             bookinfo.cover_w = tonumber(row[i])
             bookinfo.cover_h = tonumber(row[i + 1])
+            if bookinfo.has_cover == "Y" and bookinfo.cover_w and bookinfo.cover_h then
+                -- Keep cover_sizetag synchronized with cover_w x cover_h so
+                -- BookInfoManager.isCachedCoverInvalid never invalidates cached Kindle covers.
+                bookinfo.cover_sizetag = tostring(bookinfo.cover_w) .. "x" .. tostring(bookinfo.cover_h)
+            end
             if not get_cover then
                 break
             end
@@ -340,8 +371,8 @@ function CoverCacheImporter:importBookCover(book, cover_specs, target_path)
     end
 
     local orig_w, orig_h = cover_bb:getWidth(), cover_bb:getHeight()
-    local max_w = cover_specs and cover_specs.max_cover_w or 300
-    local max_h = cover_specs and cover_specs.max_cover_h or 400
+    local max_w = cover_specs and cover_specs.max_cover_w or 500
+    local max_h = cover_specs and cover_specs.max_cover_h or 700
 
     if orig_w > max_w or orig_h > max_h then
         local scale = math.min(max_w / orig_w, max_h / orig_h)
@@ -359,15 +390,22 @@ function CoverCacheImporter:importBookCover(book, cover_specs, target_path)
     local cover_type = cover_bb:getType()
     local raw_size = cover_stride * cover_h
 
+    -- Store cover_sizetag equal to cover_w x cover_h so BookInfoManager.isCachedCoverInvalid
+    -- never treats a cached Kindle thumbnail as downscaled/invalid.
     local cover_data = {
         w = cover_w,
         h = cover_h,
         bb_type = cover_type,
         bb_stride = cover_stride,
-        orig_sizetag = orig_w .. "x" .. orig_h,
+        orig_sizetag = tostring(cover_w) .. "x" .. tostring(cover_h),
         raw_data = cover_bb.data,
         raw_size = raw_size,
     }
+
+    local bim = package.loaded["bookinfomanager"]
+    if bim and type(bim.closeDbConnection) == "function" then
+        pcall(bim.closeDbConnection, bim)
+    end
 
     local conn, err = self:openDb()
     if not conn then
@@ -388,17 +426,20 @@ function CoverCacheImporter:importBookCover(book, cover_specs, target_path)
     conn:exec("BEGIN TRANSACTION;")
 
     local paths_to_cache = {}
-    if target_path and target_path ~= "" then
-        paths_to_cache[target_path] = true
+    local function addPathAndAlias(p)
+        if p and p ~= "" then
+            paths_to_cache[p] = true
+            local alt = getAlternateKindlePath(p)
+            if alt then
+                paths_to_cache[alt] = true
+            end
+        end
     end
-    if book.source_path and book.source_path ~= "" then
-        paths_to_cache[book.source_path] = true
-    end
+    addPathAndAlias(target_path)
+    addPathAndAlias(book.source_path)
     if self.cache_manager and type(self.cache_manager.getCachePaths) == "function" then
         local cached_path = self.cache_manager:getCachePaths(book)
-        if cached_path and cached_path ~= "" then
-            paths_to_cache[cached_path] = true
-        end
+        addPathAndAlias(cached_path)
     end
 
     local any_inserted = false
@@ -419,6 +460,64 @@ function CoverCacheImporter:importBookCover(book, cover_specs, target_path)
 
     logger.dbg("CoverCacheImporter: successfully cached cover for", book.id, "from", thumbnail_path)
     return true
+end
+
+--- Retrieve a scaled BlitBuffer for a book cover, importing and caching it into
+--- bookinfo_cache.sqlite3 first if needed.
+--- @param book table
+--- @param max_w number|nil
+--- @param max_h number|nil
+--- @return table|nil: BlitBuffer
+function CoverCacheImporter:getBookCoverBb(book, max_w, max_h)
+    if not book then
+        return nil
+    end
+    local lookup_path = book.source_path
+    if not lookup_path and self.cache_manager and type(self.cache_manager.getCachePaths) == "function" then
+        lookup_path = self.cache_manager:getCachePaths(book)
+    end
+
+    local cover_bb = nil
+    if lookup_path then
+        local cached = self:getCachedBookInfo(lookup_path, true)
+        if cached and cached.has_cover == "Y" and cached.cover_bb then
+            cover_bb = cached.cover_bb
+        else
+            local ok = self:importBookCover(book, nil, lookup_path)
+            if ok then
+                local fresh = self:getCachedBookInfo(lookup_path, true)
+                if fresh and fresh.has_cover == "Y" and fresh.cover_bb then
+                    cover_bb = fresh.cover_bb
+                end
+            end
+        end
+    end
+
+    if not cover_bb then
+        local thumb_path = self.virtual_library and self.virtual_library:getBookThumbnailPath(book)
+        if thumb_path then
+            local ok, rendered = pcall(RenderImage.renderImageFile, RenderImage, thumb_path)
+            if ok and rendered then
+                enhanceColorsoftVibrance(rendered, 1.25)
+                cover_bb = rendered
+            end
+        end
+    end
+
+    if cover_bb and max_w and max_h and max_w > 0 and max_h > 0 then
+        local w, h = cover_bb:getWidth(), cover_bb:getHeight()
+        if w and h and w > 0 and h > 0 and (w ~= max_w or h ~= max_h) then
+            local scale = math.min(max_w / w, max_h / h)
+            local scaled_w = math.max(1, math.floor(w * scale))
+            local scaled_h = math.max(1, math.floor(h * scale))
+            local ok_s, scaled = pcall(RenderImage.scaleBlitBuffer, RenderImage, cover_bb, scaled_w, scaled_h, true)
+            if ok_s and scaled then
+                cover_bb = scaled
+            end
+        end
+    end
+
+    return cover_bb
 end
 
 return CoverCacheImporter

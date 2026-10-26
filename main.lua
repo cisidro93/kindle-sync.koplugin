@@ -557,6 +557,16 @@ function KindlePlugin:onCloseWidget()
         self:capturePendingCloseSync()
     end
     self:syncPendingClose()
+    if home_dashboard and home_dashboard.return_after_reader then
+        home_dashboard.return_after_reader = nil
+        UIManager:nextTick(function()
+            local FileManager = require("apps/filemanager/filemanager")
+            local ReaderUI = require("apps/reader/readerui")
+            if FileManager.instance and not ReaderUI.instance and not home_dashboard.active_menu then
+                pcall(home_dashboard.show, home_dashboard)
+            end
+        end)
+    end
 end
 
 --- Triggers Kindle's background Whispersync service (com.lab126.todo)

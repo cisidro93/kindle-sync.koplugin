@@ -26,7 +26,9 @@ SELECT
     p_isDRMProtected,
     p_diskUsage,
     p_contentSize,
-    p_thumbnail
+    p_thumbnail,
+    p_percentFinished,
+    p_lastAccess
 FROM Entries
 WHERE p_type = 'Entry:Item'
     AND p_mimeType IN ('application/x-kfx-ebook', 'application/x-mobipocket-ebook')
@@ -175,6 +177,8 @@ function CcDbScanner:scan()
             open_mode = open_mode,
             source_size = tonumber(disk_usage) or tonumber(content_size) or 0,
             thumbnail_path = thumbnail_path,
+            percent_finished = results.p_percentFinished and tonumber(results.p_percentFinished[i]) or nil,
+            last_access = results.p_lastAccess and tonumber(results.p_lastAccess[i]) or nil,
         }
 
         if block_reason then
