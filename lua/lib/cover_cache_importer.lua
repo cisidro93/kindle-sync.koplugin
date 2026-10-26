@@ -146,7 +146,14 @@ function CoverCacheImporter:getCachedBookInfo(filepath, get_cover)
 end
 
 --- Insert a cover record into bookinfo_cache for a specific path.
+--- Note: lua-ljsqlite3 binds SQ3.blob with C.free as the SQLite destructor,
+--- so each bound row MUST receive its own freshly allocated zstd buffer!
 local function insertCoverRow(insert_stmt, path, book, cover_data)
+    local zst_ptr, zst_size = zstd.zstd_compress(cover_data.raw_data, cover_data.raw_size)
+    if not zst_ptr or zst_size <= 0 then
+        return false
+    end
+
     local directory, filename = util.splitFilePathName(path)
     local attr = lfs.attributes(path)
     local filesize = attr and attr.size or 0
@@ -184,7 +191,7 @@ local function insertCoverRow(insert_stmt, path, book, cover_data)
         cover_h = cover_data.h,
         cover_bb_type = cover_data.bb_type,
         cover_bb_stride = cover_data.bb_stride,
-        cover_bb_data = cover_data.blob,
+        cover_bb_data = SQ3.blob(zst_ptr, zst_size),
     }
 
     insert_stmt:clearbind():reset()
@@ -192,6 +199,7 @@ local function insertCoverRow(insert_stmt, path, book, cover_data)
         insert_stmt:bind1(i, dbrow[col])
     end
     insert_stmt:step()
+    return true
 end
 
 --- Enhance color saturation and contrast for color e-ink (Colorsoft / Kaleido 3).
@@ -271,19 +279,14 @@ function CoverCacheImporter:importBookCover(book, cover_specs, target_path)
     local cover_type = cover_bb:getType()
     local raw_size = cover_stride * cover_h
 
-    local zst_ptr, zst_size = zstd.zstd_compress(cover_bb.data, raw_size)
-    if not zst_ptr or zst_size <= 0 then
-        cover_bb:free()
-        return false, "failed to compress cover blitbuffer"
-    end
-
     local cover_data = {
         w = cover_w,
         h = cover_h,
         bb_type = cover_type,
         bb_stride = cover_stride,
         orig_sizetag = orig_w .. "x" .. orig_h,
-        blob = SQ3.blob(zst_ptr, zst_size),
+        raw_data = cover_bb.data,
+        raw_size = raw_size,
     }
 
     local conn, err = self:openDb()
@@ -318,14 +321,21 @@ function CoverCacheImporter:importBookCover(book, cover_specs, target_path)
         end
     end
 
+    local any_inserted = false
     for p in pairs(paths_to_cache) do
-        insertCoverRow(insert_stmt, p, book, cover_data)
+        if insertCoverRow(insert_stmt, p, book, cover_data) then
+            any_inserted = true
+        end
     end
 
     conn:exec("COMMIT;")
     insert_stmt:close()
     conn:close()
     cover_bb:free()
+
+    if not any_inserted then
+        return false, "failed to compress cover blitbuffer"
+    end
 
     logger.dbg("CoverCacheImporter: successfully cached cover for", book.id, "from", thumbnail_path)
     return true
