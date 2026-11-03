@@ -70,6 +70,14 @@ That's it. From then on:
 
 The dashboard shows each book with its progress on every device, the paired devices (with a **Remove** button), and pairing codes. Devices that already use KOReader's built-in **Progress sync** can point it at the same server and sign in as `reader` with the dashboard password, or use **Sign in with user name and password…** in this plugin's menu for any existing KOReader sync server.
 
+**Syncing away from home (free HTTPS with Tailscale Funnel).** Out of the box the server only answers on your home network, over plain HTTP. Do not port-forward it as is: the password and device keys would travel unencrypted. To sync anywhere without buying a domain:
+
+1. Install [Tailscale](https://tailscale.com/download) on the computer that runs the server and sign in.
+2. Run `tailscale funnel --bg 8081`. The first time, it shows a link to turn on HTTPS and Funnel for your account; open it, approve, and run the command again.
+3. It prints a public address such as `https://bookpc.tail1234.ts.net`. Use that address everywhere: when pairing a Kindle or Boox, and on the dashboard.
+
+Only the server computer needs Tailscale; the Kindle and Boox just use the HTTPS address. Devices already paired with the home address keep working at home, or pair them again with the new address to sync everywhere. To stop public access, run `tailscale funnel --bg 8081 off` (or `tailscale funnel reset`). Pick a long dashboard password, since the dashboard is now reachable from the internet.
+
 **Xteink X4 (CrossPoint firmware).** CrossPoint has its own sync client that works with this server:
 
 1. On the X4, open **Settings → CrossPoint Sync**. Set **Sync Server URL** to the dashboard address, **Username** to `reader` and **Password** to your dashboard password, then choose **Authenticate**.
