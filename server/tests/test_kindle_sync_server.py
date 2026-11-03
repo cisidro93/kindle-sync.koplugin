@@ -341,3 +341,39 @@ class TestCrossPoint(ServerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThrottle(ServerTestCase):
+    def test_wrong_keys_lock_the_client_out(self):
+        auth = self.pair("dev", "Kindle")
+        for _ in range(srv.MAX_FAILURES):
+            self.assertEqual(self.jrequest("GET", "/users/auth", auth=(srv.OWNER, "wrong"))[0], 401)
+        status, body = self.jrequest("GET", "/users/auth", auth=auth)
+        self.assertEqual(status, 429)
+        self.assertEqual(body["code"], "too_many_attempts")
+
+    def test_pair_code_guessing_is_throttled(self):
+        for _ in range(srv.MAX_FAILURES):
+            self.assertEqual(self.jrequest("POST", "/v1/pair", {"code": "ZZZZZZ", "device_id": "x"})[0], 404)
+        code, _ = self.store.create_pair_code(srv.OWNER)
+        self.assertEqual(self.jrequest("POST", "/v1/pair", {"code": code, "device_id": "x"})[0], 429)
+
+    def test_dashboard_login_is_throttled(self):
+        for _ in range(srv.MAX_FAILURES):
+            self.httpd.RequestHandlerClass.throttle.fail("127.0.0.1")
+        status, body, _ = self.request("POST", "/login", b"password=secret-pw", raw=True)
+        self.assertEqual(status, 429)
+        self.assertIn(b"Too many failed attempts", body)
+
+    def test_forwarded_client_is_counted_separately(self):
+        auth = self.pair("dev", "Kindle")
+        attacker = {"X-Forwarded-For": "203.0.113.9"}
+        for _ in range(srv.MAX_FAILURES):
+            self.request("GET", "/users/auth", auth=(srv.OWNER, "wrong"), headers=attacker)
+        self.assertEqual(self.jrequest("GET", "/users/auth", auth=(srv.OWNER, "wrong"), headers=attacker)[0], 429)
+        self.assertEqual(self.jrequest("GET", "/users/auth", auth=auth)[0], 200)
+
+    def test_successes_are_not_counted(self):
+        auth = self.pair("dev", "Kindle")
+        for _ in range(srv.MAX_FAILURES + 2):
+            self.assertEqual(self.jrequest("GET", "/users/auth", auth=auth)[0], 200)

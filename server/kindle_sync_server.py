@@ -52,6 +52,8 @@ PAIR_CODE_TTL = 15 * 60
 PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I confusion
 SESSION_TTL = 30 * 24 * 3600
 MAX_BODY = 64 * 1024
+MAX_FAILURES = 10  # failed sign-ins / pairing codes per client before a lockout
+LOCKOUT_SECONDS = 15 * 60
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -184,6 +186,40 @@ def _clean(value, limit: int = 256) -> str:
     if value is None:
         return ""
     return str(value).strip()[:limit]
+
+
+class Throttle:
+    """Counts failed sign-ins per client and locks the client out for a while.
+
+    Stops password, device-key and pairing-code guessing once the server is
+    reachable from the internet. Successful requests are never counted.
+    """
+
+    def __init__(self, max_failures: int = MAX_FAILURES, window: int = LOCKOUT_SECONDS):
+        self.max_failures = max_failures
+        self.window = window
+        self.lock = threading.Lock()
+        self.failures: dict[str, list[float]] = {}
+
+    def _recent(self, client: str, now: float) -> list[float]:
+        recent = [t for t in self.failures.get(client, []) if now - t < self.window]
+        if recent:
+            self.failures[client] = recent
+        else:
+            self.failures.pop(client, None)
+        return recent
+
+    def blocked(self, client: str) -> bool:
+        with self.lock:
+            return len(self._recent(client, time.time())) >= self.max_failures
+
+    def fail(self, client: str) -> None:
+        now = time.time()
+        with self.lock:
+            self._recent(client, now)
+            self.failures.setdefault(client, []).append(now)
+            if len(self.failures) > 10000:  # bound memory under a wide attack
+                self.failures.pop(next(iter(self.failures)))
 
 
 class Store:
@@ -647,6 +683,7 @@ class SyncHandler(BaseHTTPRequestHandler):
     store: Store = None  # type: ignore[assignment]
     sessions: dict = {}
     open_registration = False
+    throttle: Throttle = None  # type: ignore[assignment]
 
     def log_message(self, fmt, *args):  # quieter, single-line logs
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
@@ -699,10 +736,29 @@ class SyncHandler(BaseHTTPRequestHandler):
         data = parse_qs(self._body_bytes().decode("utf-8", "replace"))
         return {k: v[0] for k, v in data.items()}
 
+    def _client(self) -> str:
+        """Client address; behind a local reverse proxy (Tailscale Funnel,
+        Caddy) every request comes from loopback, so use the forwarded one."""
+        peer = self.client_address[0]
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        if forwarded and (peer.startswith("127.") or peer == "::1"):
+            return forwarded.split(",")[-1].strip() or peer
+        return peer
+
+    def _check_throttle(self) -> None:
+        if self.throttle.blocked(self._client()):
+            raise ApiError(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "too_many_attempts",
+                "Too many failed sign-in attempts. Try again in 15 minutes.",
+            )
+
     def _auth_user(self) -> str:
+        self._check_throttle()
         user = self.headers.get("x-auth-user", "")
         key = self.headers.get("x-auth-key", "")
         if not self.store.authenticate(user, key):
+            self.throttle.fail(self._client())
             raise ApiError(HTTPStatus.UNAUTHORIZED, "unauthorized", "Unauthorized. Pair this device again.")
         return user
 
@@ -795,9 +851,14 @@ class SyncHandler(BaseHTTPRequestHandler):
         device_id = _clean(body.get("device_id"), 128) or secrets.token_hex(16)
         if not code:
             raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_fields", "A pairing code is required.")
-        username, key = self.store.claim_pair_code(
-            code, device_id, _clean(body.get("device_name"), 128), _clean(body.get("device_model"), 128)
-        )
+        self._check_throttle()
+        try:
+            username, key = self.store.claim_pair_code(
+                code, device_id, _clean(body.get("device_name"), 128), _clean(body.get("device_model"), 128)
+            )
+        except ApiError:
+            self.throttle.fail(self._client())
+            raise
         self._json(200, {"username": username, "userkey": key, "device_id": device_id, "server_version": SERVER_VERSION})
 
     # -- web dashboard ----------------------------------------------------
@@ -805,6 +866,8 @@ class SyncHandler(BaseHTTPRequestHandler):
         session = self._session()
         if path == "/login" and method == "POST":
             form = self._form()
+            if self.throttle.blocked(self._client()):
+                return self._html(render_login("Too many failed attempts. Try again in 15 minutes."), 429)
             if _check_password(form.get("password", ""), self.store.get_setting("admin_password") or ""):
                 token = secrets.token_urlsafe(32)
                 self.sessions[token] = time.time() + SESSION_TTL
@@ -812,6 +875,7 @@ class SyncHandler(BaseHTTPRequestHandler):
                 if self.headers.get("X-Forwarded-Proto", "").lower() == "https":
                     cookie += "; Secure"
                 return self._redirect("/", {"Set-Cookie": cookie})
+            self.throttle.fail(self._client())
             time.sleep(0.5)
             return self._html(render_login("That password is not right."), 401)
         if path in ("/", "/login") and method == "GET":
@@ -852,7 +916,11 @@ def build_server(host: str, port: int, data_dir: str, admin_password: str | None
         # KOReader's built-in Progress sync logs in with md5(password), so the
         # owner account accepts the dashboard password from stock clients too.
         store.set_userkey(OWNER, hashlib.md5(password.encode()).hexdigest())
-    handler = type("BoundSyncHandler", (SyncHandler,), {"store": store, "sessions": {}, "open_registration": open_registration})
+    handler = type(
+        "BoundSyncHandler",
+        (SyncHandler,),
+        {"store": store, "sessions": {}, "open_registration": open_registration, "throttle": Throttle()},
+    )
     httpd = ThreadingHTTPServer((host, port), handler)
     return httpd, store, generated
 
