@@ -49,10 +49,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 SERVER_VERSION = "1.0.0"
 OWNER = "reader"
 PAIR_CODE_TTL = 15 * 60
+APP_PREFIX = "app-"  # device_id prefix of device passwords
 PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I confusion
 SESSION_TTL = 30 * 24 * 3600
 MAX_BODY = 64 * 1024
-MAX_FAILURES = 10  # failed sign-ins / pairing codes per client before a lockout
+MAX_FAILURES = 5  # failed sign-ins / pairing codes per client before a lockout
 LOCKOUT_SECONDS = 15 * 60
 
 SCHEMA = """
@@ -101,6 +102,12 @@ CREATE TABLE IF NOT EXISTS aliases (
     document TEXT NOT NULL,
     book_key TEXT NOT NULL,
     PRIMARY KEY (username, document)
+);
+CREATE TABLE IF NOT EXISTS book_links (
+    username TEXT NOT NULL,
+    from_key TEXT NOT NULL,
+    to_key TEXT NOT NULL,
+    PRIMARY KEY (username, from_key)
 );
 CREATE TABLE IF NOT EXISTS pair_codes (
     code TEXT PRIMARY KEY,
@@ -279,17 +286,37 @@ class Store:
         with self.lock, self.connect() as db:
             db.execute("UPDATE users SET userkey=? WHERE username=?", (userkey, username))
 
-    def authenticate(self, username: str, key: str) -> bool:
+    def authenticate(self, username: str, key: str) -> str | None:
+        """Checks a kosync key. Returns None on failure, "" for the account
+        password, or the device_id whose device key or app password matched."""
         if not username or not key:
-            return False
+            return None
         with self.connect() as db:
             row = db.execute("SELECT userkey FROM users WHERE username=?", (username,)).fetchone()
             if row and hmac.compare_digest(row["userkey"], key):
-                return True
+                return ""
             rows = db.execute(
-                "SELECT device_key FROM devices WHERE username=? AND device_key IS NOT NULL", (username,)
+                "SELECT device_id, device_key FROM devices WHERE username=? AND device_key IS NOT NULL", (username,)
             ).fetchall()
-            return any(hmac.compare_digest(r["device_key"], key) for r in rows)
+            for r in rows:
+                if hmac.compare_digest(r["device_key"], key):
+                    return r["device_id"]
+            return None
+
+    def create_app_password(self, username: str, name: str) -> str:
+        """Creates a device password for an app that signs in with a user name
+        and password (Xteink X4, KOReader's Progress sync). Removing the device
+        on the dashboard revokes it without touching other devices."""
+        groups = ["".join(secrets.choice(PAIR_CODE_ALPHABET) for _ in range(4)) for _ in range(4)]
+        password = "-".join(groups).lower()
+        now = int(time.time())
+        with self.lock, self.connect() as db:
+            db.execute(
+                "INSERT INTO devices(device_id, username, name, model, device_key, created_at, last_seen) VALUES(?,?,?,?,?,?,?)",
+                (APP_PREFIX + secrets.token_hex(8), username, name or "Device", "Device password",
+                 hashlib.md5(password.encode()).hexdigest(), now, 0),
+            )
+        return password
 
     # -- devices ----------------------------------------------------------
     def touch_device(self, username: str, device_id: str, name: str = "", model: str = "") -> None:
@@ -362,9 +389,15 @@ class Store:
             return username, device_key
 
     # -- progress ---------------------------------------------------------
+    @staticmethod
+    def follow_link(db: sqlite3.Connection, username: str, book_key: str) -> str:
+        """Maps a book key the reader linked on the dashboard to its target."""
+        row = db.execute("SELECT to_key FROM book_links WHERE username=? AND from_key=?", (username, book_key)).fetchone()
+        return row["to_key"] if row else book_key
+
     def resolve_book_key(self, db: sqlite3.Connection, username: str, document: str) -> str:
         row = db.execute("SELECT book_key FROM aliases WHERE username=? AND document=?", (username, document)).fetchone()
-        return row["book_key"] if row else document
+        return self.follow_link(db, username, row["book_key"] if row else document)
 
     def get_progress(self, username: str, document: str) -> dict | None:
         """Looks a book up by file hash or book key.
@@ -408,7 +441,7 @@ class Store:
             "version": row["version"],
         }
 
-    def put_progress(self, username: str, body: dict) -> dict:
+    def put_progress(self, username: str, body: dict, auth_device: str | None = None) -> dict:
         document = _clean(body.get("document"), 128)
         progress = _clean(body.get("progress"), 2048)
         device = _clean(body.get("device"), 128)
@@ -447,6 +480,7 @@ class Store:
                     # Link this file to the same book on other devices by title/author.
                     book_key = book_key_for(title, authors) or ""
             if book_key:
+                book_key = self.follow_link(db, username, book_key)
                 db.execute(
                     "INSERT OR REPLACE INTO aliases(username, document, book_key) VALUES(?,?,?)",
                     (username, document, book_key),
@@ -510,7 +544,10 @@ class Store:
                      position_json),
                 )
                 result = {"document": document, "book_key": book_key, "timestamp": now, "version": version}
-        self.touch_device(username, device_id, name=device)
+        if auth_device and auth_device.startswith(APP_PREFIX):
+            self.touch_device(username, auth_device)  # device password: show it as used
+        else:
+            self.touch_device(username, device_id, name=device)
         return result
 
     def list_books(self, username: str) -> list[dict]:
@@ -533,6 +570,44 @@ class Store:
         with self.lock, self.connect() as db:
             for table in ("progress", "device_progress", "aliases"):
                 db.execute(f"DELETE FROM {table} WHERE username=? AND book_key=?", (username, book_key))
+            db.execute("DELETE FROM book_links WHERE username=? AND (from_key=? OR to_key=?)", (username, book_key, book_key))
+
+    def link_books(self, username: str, from_key: str, to_key: str) -> None:
+        """Treats from_key as the same book as to_key from now on.
+
+        Used when two copies did not match automatically (a subtitle on one,
+        "Yuval Harari" vs "Yuval Noah Harari"). The further position is kept,
+        and the version moves past both so every device picks it up.
+        """
+        if not from_key or not to_key or from_key == to_key:
+            return
+        with self.lock, self.connect() as db:
+            src = db.execute("SELECT * FROM progress WHERE username=? AND book_key=?", (username, from_key)).fetchone()
+            dst = db.execute("SELECT * FROM progress WHERE username=? AND book_key=?", (username, to_key)).fetchone()
+            if not src or not dst:
+                raise ApiError(HTTPStatus.NOT_FOUND, "not_found", "Book not found.")
+            version = max(int(src["version"]), int(dst["version"])) + 1
+            if float(src["percentage"]) > float(dst["percentage"]):
+                db.execute(
+                    "UPDATE progress SET document=?, progress=?, percentage=?, device=?, device_id=?, timestamp=?, "
+                    "position=? WHERE username=? AND book_key=?",
+                    (src["document"], src["progress"], src["percentage"], src["device"], src["device_id"],
+                     src["timestamp"], src["position"], username, to_key),
+                )
+            db.execute("UPDATE progress SET version=? WHERE username=? AND book_key=?", (version, username, to_key))
+            db.execute("DELETE FROM progress WHERE username=? AND book_key=?", (username, from_key))
+            db.execute(
+                "INSERT OR REPLACE INTO device_progress(username, book_key, device_id, device, percentage, timestamp) "
+                "SELECT username, ?, device_id, device, percentage, timestamp FROM device_progress "
+                "WHERE username=? AND book_key=?",
+                (to_key, username, from_key),
+            )
+            db.execute("DELETE FROM device_progress WHERE username=? AND book_key=?", (username, from_key))
+            db.execute("UPDATE aliases SET book_key=? WHERE username=? AND book_key=?", (to_key, username, from_key))
+            db.execute("UPDATE book_links SET to_key=? WHERE username=? AND to_key=?", (to_key, username, from_key))
+            db.execute(
+                "INSERT OR REPLACE INTO book_links(username, from_key, to_key) VALUES(?,?,?)", (username, from_key, to_key)
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +629,7 @@ button,.btn{background:var(--accent);color:var(--accent-ink);border:0;border-rad
 button.link{background:none;color:var(--warn);padding:0;font-weight:400;font-size:.875rem}
 .code{font:700 2.25rem/1.2 ui-monospace,Menlo,monospace;letter-spacing:.3em;margin:8px 0}
 ol{padding-left:20px}input{font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;width:100%;background:var(--card);color:var(--ink)}
+form.tools{margin-top:8px}select{font:inherit;max-width:16rem;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:6px}
 .empty{text-align:center;padding:32px 16px}.error{color:var(--warn)}form.inline{display:inline}
 """
 
@@ -589,7 +665,7 @@ def render_login(error: str = "") -> bytes:
     )
 
 
-def render_dashboard(store: Store, csrf: str, server_url: str) -> bytes:
+def render_dashboard(store: Store, csrf: str, server_url: str, new_password: tuple[str, str] | None = None) -> bytes:
     e = html.escape
     books = store.list_books(OWNER)
     devices = store.list_devices(OWNER)
@@ -607,8 +683,29 @@ def render_dashboard(store: Store, csrf: str, server_url: str) -> bytes:
             "<div class='card empty'><p>No reading progress yet.</p>"
             "<p class='muted small'>Pair a device below, open a book and turn a page. It shows up here when you close the book.</p></div>"
         )
+    hidden_csrf = f"<input type=hidden name=csrf value={e(csrf)}>"
     for book in books:
         pct = round(book["percentage"] * 100, 1)
+        others = [b for b in books if b["book_key"] != book["book_key"]]
+        link_form = ""
+        if others:
+            options = "".join(
+                f"<option value='{e(b['book_key'])}'>{e(b['title'] or b['book_key'])}"
+                f"{' · ' + e(b['authors']) if b['authors'] else ''}</option>"
+                for b in others
+            )
+            link_form = (
+                f"<form method=post action=/books/link class=tools>{hidden_csrf}"
+                f"<input type=hidden name=from_key value='{e(book['book_key'])}'>"
+                f"<label class='muted small'>Same book as <select name=to_key>{options}</select></label> "
+                "<button class=link type=submit>Link</button></form>"
+            )
+        forget_form = (
+            f"<form method=post action=/books/forget class=tools "
+            f"onsubmit=\"return confirm('Forget this book on every device?')\">{hidden_csrf}"
+            f"<input type=hidden name=book_key value='{e(book['book_key'])}'>"
+            "<button class=link type=submit>Forget this book</button></form>"
+        )
         title = book["title"] or book["book_key"]
         authors = f"<div class='muted small'>{e(book['authors'])}</div>" if book["authors"] else ""
         rows = []
@@ -623,7 +720,8 @@ def render_dashboard(store: Store, csrf: str, server_url: str) -> bytes:
             f"<div><strong>{pct}%</strong></div></div>"
             f"<div class=bar><span style='width:{pct}%'></span></div>"
             f"<div class='muted small'>Latest: {e(book['device'] or 'Unknown')} · {_ago(book['timestamp'])}</div>"
-            f"<ul class=devices>{''.join(rows)}</ul></div>"
+            f"<ul class=devices>{''.join(rows)}</ul>"
+            f"<div class=row>{link_form}{forget_form}</div></div>"
         )
 
     parts.append("<h2>Devices</h2>")
@@ -631,10 +729,14 @@ def render_dashboard(store: Store, csrf: str, server_url: str) -> bytes:
         parts.append("<div class='card empty muted'>No devices yet.</div>")
     for d in devices:
         label = d["name"] or d["model"] or d["device_id"][:8]
-        meta = " · ".join(x for x in (d["model"] if d["model"] != label else "", "paired" if d["paired"] else "password login") if x)
+        is_app = d["device_id"].startswith(APP_PREFIX)
+        status = "device password" if is_app else ("paired" if d["paired"] else "account password")
+        model = d["model"] if d["model"] not in (label, "Device password") else ""
+        meta = " · ".join(x for x in (model, status) if x)
+        seen = f"last synced {_ago(d['last_seen'])}" if d["last_seen"] else "not used yet"
         parts.append(
             f"<div class=card><div class=row><div><strong>{e(label)}</strong>"
-            f"<div class='muted small'>{e(meta)} · last synced {_ago(d['last_seen'])}</div></div>"
+            f"<div class='muted small'>{e(meta)} · {seen}</div></div>"
             f"<form method=post action=/devices/remove class=inline><input type=hidden name=csrf value={e(csrf)}>"
             f"<input type=hidden name=device_id value='{e(d['device_id'])}'>"
             "<button class=link type=submit>Remove</button></form></div></div>"
@@ -655,19 +757,31 @@ def render_dashboard(store: Store, csrf: str, server_url: str) -> bytes:
         f"<button type=submit>{'New pairing code' if codes else 'Get a pairing code'}</button></form>"
         "</div>"
     )
+    shown = ""
+    if new_password:
+        shown = (
+            f"<p>Device password for <strong>{e(new_password[0])}</strong> (shown only now):</p>"
+            f"<div class=code style='font-size:1.5rem;letter-spacing:.1em'>{e(new_password[1])}</div>"
+        )
     parts.append(
         "<div class=card><strong>Xteink X4 (CrossPoint) and other sync apps</strong>"
+        "<p class='muted small'>Apps that sign in with a user name and password get their own device password, "
+        "so you can remove one without affecting the others.</p>"
+        f"{shown}"
+        f"<form method=post action=/devices/password>{hidden_csrf}"
+        "<label for=dn>Device name</label><input id=dn name=name placeholder='Xteink X4' maxlength=64>"
+        "<p><button type=submit>Create device password</button></p></form>"
         "<ol><li>On the X4, open <strong>Settings → CrossPoint Sync</strong>.</li>"
         f"<li>Set <strong>Sync Server URL</strong> to <strong>{e(server_url)}</strong>, "
-        f"<strong>Username</strong> to <strong>{OWNER}</strong> and <strong>Password</strong> to your dashboard password, "
+        f"<strong>Username</strong> to <strong>{OWNER}</strong> and <strong>Password</strong> to the device password, "
         "then choose <strong>Authenticate</strong>.</li>"
         "<li>Keep <strong>Send Document Metadata</strong> on so the X4 is matched to the same book on your Kindle and Boox, "
         "even when the files differ.</li>"
         "<li>In a book, run <strong>Sync</strong> from the reader menu. With <strong>Smart Sync</strong> it jumps ahead or "
         "uploads by itself.</li></ol>"
         "<p class='muted small'>KOReader's built-in Progress sync works the same way: custom server, this address, "
-        f"user <strong>{OWNER}</strong>, dashboard password. These devices sign in with the password, so to lock one out, "
-        "restart the server with a new <code>--admin-password</code>.</p></div>"
+        f"user <strong>{OWNER}</strong>, a device password. The dashboard password also works there, but devices using it "
+        "can only be locked out by changing it.</p></div>"
     )
     parts.append(f"<p class='muted small'>Account name: <strong>{OWNER}</strong> · Server v{SERVER_VERSION}</p>")
     return _page("Reading Sync", "".join(parts))
@@ -684,6 +798,7 @@ class SyncHandler(BaseHTTPRequestHandler):
     sessions: dict = {}
     open_registration = False
     throttle: Throttle = None  # type: ignore[assignment]
+    auth_device: str | None = None
 
     def log_message(self, fmt, *args):  # quieter, single-line logs
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
@@ -757,9 +872,11 @@ class SyncHandler(BaseHTTPRequestHandler):
         self._check_throttle()
         user = self.headers.get("x-auth-user", "")
         key = self.headers.get("x-auth-key", "")
-        if not self.store.authenticate(user, key):
+        matched = self.store.authenticate(user, key)
+        if matched is None:
             self.throttle.fail(self._client())
             raise ApiError(HTTPStatus.UNAUTHORIZED, "unauthorized", "Unauthorized. Pair this device again.")
+        self.auth_device = matched
         return user
 
     def _session(self) -> str | None:
@@ -807,7 +924,7 @@ class SyncHandler(BaseHTTPRequestHandler):
                 return self._json(200, {"authorized": "OK"})
             if path == "/syncs/progress" and method == "PUT":
                 user = self._auth_user()
-                return self._json(200, self.store.put_progress(user, self._json_body()))
+                return self._json(200, self.store.put_progress(user, self._json_body(), self.auth_device))
             if path.startswith("/syncs/progress/") and method == "GET":
                 user = self._auth_user()
                 document = unquote(path[len("/syncs/progress/"):])
@@ -884,7 +1001,7 @@ class SyncHandler(BaseHTTPRequestHandler):
             if path == "/login":
                 return self._redirect("/")
             return self._html(render_dashboard(self.store, self._csrf(session), self._server_url()))
-        if method == "POST" and path in ("/logout", "/pair", "/devices/remove"):
+        if method == "POST" and path in ("/logout", "/pair", "/devices/remove", "/devices/password", "/books/forget", "/books/link"):
             if not session:
                 return self._redirect("/")
             form = self._form()
@@ -897,6 +1014,16 @@ class SyncHandler(BaseHTTPRequestHandler):
                 self.store.create_pair_code(OWNER)
             elif path == "/devices/remove":
                 self.store.remove_device(OWNER, form.get("device_id", ""))
+            elif path == "/devices/password":
+                name = _clean(form.get("name"), 64) or "Device"
+                password = self.store.create_app_password(OWNER, name)
+                # Shown once, on this response only; never stored in plain text.
+                page = render_dashboard(self.store, self._csrf(session), self._server_url(), (name, password))
+                return self._html(page)
+            elif path == "/books/forget":
+                self.store.delete_book(OWNER, form.get("book_key", ""))
+            elif path == "/books/link":
+                self.store.link_books(OWNER, form.get("from_key", ""), form.get("to_key", ""))
             return self._redirect("/")
         self._json(404, {"code": "not_found", "message": "Not found."})
 

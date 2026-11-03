@@ -377,3 +377,79 @@ class TestThrottle(ServerTestCase):
         auth = self.pair("dev", "Kindle")
         for _ in range(srv.MAX_FAILURES + 2):
             self.assertEqual(self.jrequest("GET", "/users/auth", auth=auth)[0], 200)
+
+
+class TestBookTools(ServerTestCase):
+    def put(self, auth, device_id, book_key, document, pct, **extra):
+        body = {"document": document, "book_key": book_key, "progress": "p", "percentage": pct, "device": device_id,
+                "device_id": device_id}
+        body.update(extra)
+        return self.jrequest("PUT", "/syncs/progress", body, auth=auth)
+
+    def test_link_merges_books_that_did_not_match(self):
+        kindle = self.pair("kindle", "Kindle")
+        boox = self.pair("boox", "Boox")
+        self.put(kindle, "kindle", "sapiens brief history of humankind|yuval noah harari", "k-hash", 0.6)
+        self.put(boox, "boox", "sapiens|yuval harari", "b-hash", 0.2)
+        self.store.link_books(srv.OWNER, "sapiens|yuval harari", "sapiens brief history of humankind|yuval noah harari")
+
+        books = self.store.list_books(srv.OWNER)
+        self.assertEqual(len(books), 1)
+        self.assertEqual({d["device_id"] for d in books[0]["devices"]}, {"kindle", "boox"})
+        # The Boox still asks with its own key and gets the further position, with a newer version.
+        status, record = self.jrequest("GET", "/syncs/progress/sapiens%7Cyuval%20harari", auth=boox)
+        self.assertEqual(status, 200)
+        self.assertAlmostEqual(record["percentage"], 0.6)
+        self.assertEqual(record["version"], 2)  # past both books (each at 1)
+        self.assertEqual(record["progress"], "")  # different file: position by percentage
+        # Its next upload lands on the linked book.
+        status, body = self.put(boox, "boox", "sapiens|yuval harari", "b-hash", 0.65, base_version=2)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["book_key"], "sapiens brief history of humankind|yuval noah harari")
+        self.assertEqual(len(self.store.list_books(srv.OWNER)), 1)
+
+    def test_link_keeps_the_further_position(self):
+        auth = self.pair("kindle", "Kindle")
+        self.put(auth, "kindle", "a|x", "h1", 0.8)
+        self.put(auth, "kindle", "b|x", "h2", 0.3)
+        self.store.link_books(srv.OWNER, "a|x", "b|x")
+        status, record = self.jrequest("GET", "/syncs/progress/b%7Cx", auth=auth)
+        self.assertAlmostEqual(record["percentage"], 0.8)
+
+    def test_forget_book(self):
+        auth = self.pair("kindle", "Kindle")
+        self.put(auth, "kindle", "a|x", "h1", 0.5)
+        self.store.delete_book(srv.OWNER, "a|x")
+        self.assertEqual(self.store.list_books(srv.OWNER), [])
+        self.assertEqual(self.jrequest("GET", "/syncs/progress/h1", auth=auth), (200, {}))
+
+
+class TestDevicePasswords(ServerTestCase):
+    def test_device_password_signs_in_and_can_be_revoked(self):
+        password = self.store.create_app_password(srv.OWNER, "Xteink X4")
+        key = hashlib.md5(password.encode()).hexdigest()
+        auth = (srv.OWNER, key)
+        self.assertEqual(self.jrequest("GET", "/users/auth", auth=auth)[0], 200)
+        body = {"document": "h", "progress": "p", "percentage": 0.1, "device": "X4", "device_id": "x4-hw-id"}
+        self.assertEqual(self.jrequest("PUT", "/syncs/progress", body, auth=auth)[0], 200)
+        devices = self.store.list_devices(srv.OWNER)
+        app = [d for d in devices if d["device_id"].startswith(srv.APP_PREFIX)]
+        self.assertEqual(len(app), 1)
+        self.assertGreater(app[0]["last_seen"], 0)
+        self.assertFalse(any(d["device_id"] == "x4-hw-id" for d in devices))
+        self.store.remove_device(srv.OWNER, app[0]["device_id"])
+        self.assertEqual(self.jrequest("GET", "/users/auth", auth=auth)[0], 401)
+
+    def test_dashboard_creates_and_shows_device_password_once(self):
+        status, _, headers = self.request("POST", "/login", b"password=secret-pw", raw=True)
+        cookie = headers["Set-Cookie"].split(";")[0]
+        page = self.request("GET", "/", headers={"Cookie": cookie})[1]
+        csrf = page.split(b"name=csrf value=")[1].split(b">")[0].decode()
+        status, page, _ = self.request(
+            "POST", "/devices/password", ("csrf=%s&name=My+X4" % csrf).encode(), raw=True, headers={"Cookie": cookie}
+        )
+        self.assertEqual(status, 200)
+        self.assertIn(b"Device password for <strong>My X4</strong>", page)
+        page = self.request("GET", "/", headers={"Cookie": cookie})[1]
+        self.assertNotIn(b"Device password for", page)
+        self.assertIn(b"My X4", page)
