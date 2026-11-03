@@ -37,6 +37,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import sqlite3
 import sys
 import threading
@@ -1052,6 +1053,16 @@ def build_server(host: str, port: int, data_dir: str, admin_password: str | None
     return httpd, store, generated
 
 
+def lan_address() -> str | None:
+    """This computer's address on the home network (no packets are sent)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 80))  # TEST-NET address; only picks the outgoing interface
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Cross-device reading sync server for KOReader")
     parser.add_argument("--host", default=os.environ.get("KSYNC_HOST", "0.0.0.0"))
@@ -1067,6 +1078,13 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     httpd, _, generated = build_server(args.host, args.port, args.data, args.admin_password, args.open_registration)
     print(f"Reading Sync server v{SERVER_VERSION} listening on http://{args.host}:{args.port}")
+    if args.host in ("0.0.0.0", "", "::"):
+        print(f"On this computer open http://localhost:{args.port}")
+        ip = lan_address()
+        if ip:
+            print(f"On your Kindle, Boox or phone use http://{ip}:{args.port} (same Wi-Fi)")
+        print("If other devices can't connect, allow Python through this computer's firewall (see the setup guide).")
+    sys.stdout.flush()
     if generated:
         print(f"Dashboard password (shown once, change with --admin-password): {generated}")
     try:
