@@ -1,6 +1,28 @@
 require("busted.runner")()
 local helper = require("spec/test_helper")
 
+--- Finds a menu entry by its visible text anywhere in the grouped menu.
+local function findMenuItem(menu_items, text)
+    local function search(items)
+        for _, entry in ipairs(items or {}) do
+            local label = entry.text
+            if not label and entry.text_func then
+                local ok, value = pcall(entry.text_func)
+                label = ok and value or nil
+            end
+            if label == text then
+                return entry
+            end
+            local children = entry.sub_item_table or (entry.sub_item_table_func and entry.sub_item_table_func())
+            local found = children and search(children)
+            if found then
+                return found
+            end
+        end
+    end
+    return search(menu_items.kindle_plugin.sub_item_table)
+end
+
 describe("KindlePlugin", function()
     local LibraryIndex
     local VirtualLibrary
@@ -197,8 +219,21 @@ describe("KindlePlugin", function()
         local menu_items = {}
         instance:addToMainMenu(menu_items)
         assert.is_truthy(menu_items.kindle_plugin)
-        assert.is_false(menu_items.kindle_plugin.sub_item_table[1].enabled_func())
-        assert.is_false(menu_items.kindle_plugin.sub_item_table[2].enabled_func())
+        assert.is_false(findMenuItem(menu_items, "Browse Kindle Library").enabled_func())
+        assert.is_false(findMenuItem(menu_items, "Refresh Kindle Index").enabled_func())
+    end)
+
+    it("groups the menu with cross-device sync first", function()
+        local instance = newPlugin()
+        instance.ui = { document = nil }
+        local menu_items = {}
+        instance:addToMainMenu(menu_items)
+        local top = menu_items.kindle_plugin.sub_item_table
+        assert.are.equal("Cross-device sync", top[1].text)
+        assert.is_true(#top <= 7)
+        for _, title in ipairs({ "Pair this device…", "Sync this book now", "Disconnect this device" }) do
+            assert.is_truthy(findMenuItem(menu_items, title), title)
+        end
     end)
 
     it("keeps safe menu actions reachable inside ReaderUI and gates live-state hazards", function()
@@ -210,24 +245,26 @@ describe("KindlePlugin", function()
         local menu_items = {}
         instance:addToMainMenu(menu_items)
         assert.is_truthy(menu_items.kindle_plugin)
-        local items = assert(menu_items.kindle_plugin.sub_item_table)
+        local function item(text)
+            return assert(findMenuItem(menu_items, text), text)
+        end
 
         -- Browsing is safe because its handler performs normal ReaderUI
         -- teardown first. Read-only/index and settings actions stay available.
-        assert.is_true(items[1].enabled_func()) -- Browse Kindle Library
-        assert.is_true(items[2].enabled_func()) -- Refresh Kindle Index
-        assert.is_nil(items[3].enabled_func) -- Clear Book Keys
-        assert.is_true(items[7].checked_func()) -- Sync reading state with Kindle
-        assert.is_true(items[9].enabled_func()) -- Sync behavior
+        assert.is_true(item("Browse Kindle Library").enabled_func())
+        assert.is_true(item("Refresh Kindle Index").enabled_func())
+        assert.is_nil(item("Clear Book Keys").enabled_func)
+        assert.is_true(item("Sync reading state with Kindle").checked_func())
+        assert.is_true(item("Sync behavior").enabled_func())
 
         -- These operate on persisted cache/DocSettings state and must not race
         -- the live document.
-        assert.is_false(items[4].enabled_func()) -- Clear Kindle Cache
-        assert.is_false(items[8].enabled_func()) -- Sync all books now
-        assert.is_false(items[10].enabled_func()) -- Sync current book now (no session)
-        assert.is_false(items[11].enabled_func()) -- Prepare all unprepared books (doc open)
+        assert.is_false(item("Clear Kindle Cache").enabled_func())
+        assert.is_false(item("Sync all books now").enabled_func())
+        assert.is_false(item("Sync current book now").enabled_func()) -- no session
+        assert.is_false(item("Prepare all unprepared books").enabled_func()) -- doc open
 
-        items[1].callback()
+        item("Browse Kindle Library").callback()
         local info = UIManager._shown_widgets[#UIManager._shown_widgets]
         assert.is_truthy(info.text:match("file browser"))
     end)

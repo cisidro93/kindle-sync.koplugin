@@ -121,7 +121,11 @@ User selects a book
 │   ├── ccdb_scanner.lua
 │   ├── helper_client.lua
 │   ├── reading_state_sync.lua
+│   ├── cloud_sync.lua             ← cross-device sync lifecycle (pull on open/resume, push on close/suspend, offline queue)
+│   ├── cloud_sync_menu.lua        ← "Cross-device sync" menu and pairing dialogs
 │   └── lib/
+│       ├── cloud_sync_client.lua    ← kosync-compatible HTTP client with friendly errors
+│       ├── cloud_sync_policy.lua    ← pure pull/push conflict rules and book identity
 │       ├── kindle_sidecar.lua       ← byte-exact KRDS codec
 │       ├── position_map.lua         ← in-process XPointer ↔ KFX translation
 │       ├── kindle_catalog_db.lua    ← firmware-aware SQLite/ICU connection setup
@@ -138,6 +142,7 @@ User selects a book
 │   ├── kfxlib/                    ← pristine Calibre KFX Input source
 │   └── dedrm/
 │
+├── server/                        ← self-hosted cross-device sync server (stdlib Python, kosync-compatible, web dashboard)
 ├── lib/                           ← DRM/native helper assets
 ├── test/
 │   └── drm/crypto_hook_harness.c  ← executable ARM test for the shipped crypto_hook.so

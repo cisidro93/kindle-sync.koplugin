@@ -12,6 +12,7 @@ A KOReader plugin that lets you read the books in your Kindle's native library d
 - **Amazon Daily Reading Goals & Whispersync Tracking** — reading progress is automatically pushed to the Kindle Reader Data Store (`.yjf` KRDS sidecar) on book close and device sleep/suspend, updating your Amazon Reading Insights streaks
 - **Automatic Sidecar Bootstrapping** — brand-new books never before opened in the native Kindle reader are automatically bootstrapped with full KRDS sidecars so Whispersync tracks them immediately
 - **Whispersync Cloud Nudge** — automatically signals Kindle's `com.lab126.todo` background Whispersync daemon via LIPC to sync reading goals over Wi-Fi
+- **Cross-device sync** — continue the same book on Kindle, Boox Palma/Go or any KOReader device through a self-hosted server with one-code pairing and a web dashboard
 - **Exact reading state sync** — switch between KOReader and the stock Kindle reader at the exact same reading position, in either direction
 - **Cached for speed** — books are prepared and cached so subsequent opening is instant
 
@@ -29,10 +30,10 @@ A KOReader plugin that lets you read the books in your Kindle's native library d
 2. Browse your books and tap to read
 3. The first open takes a while — the book is prepared on-device. After that it opens instantly. A "Preparing…" message shows while this happens; large books can take several minutes on older devices.
 
-The library can also be opened via **Menu → Tools → More tools → Kindle Library → Browse Kindle Library**, or bound to a gesture or profile through KOReader's Dispatcher ("Kindle Library" action).
+The library can also be opened via **Menu → Tools → KindleOS → Kindle Library → Browse Kindle Library**, or bound to a gesture or profile through KOReader's Dispatcher ("Kindle Library" action).
 
-**Syncing reading progress:**
-1. Go to **Menu → Tools → More tools → Kindle Library → Sync reading state with Kindle** to enable sync (works in the file browser and inside a book)
+**Syncing reading progress with the built-in Kindle reader (same device):**
+1. Go to **Menu → Tools → KindleOS → Sync with Kindle reader → Sync reading state with Kindle** to enable sync (works in the file browser and inside a book)
 2. Open **Sync behavior** and enable **Enable sync FROM Kindle TO KOReader** — this is off by default, and without it no sync from Kindle ever happens. Sync TO Kindle is on by default and applies silently.
 3. Choose what to do when one side has newer or older progress under the **FROM/TO Kindle sync settings** entries. Each case can be set to **Always sync**, **Ask me**, or **Never**.
 
@@ -42,9 +43,38 @@ If both KOReader and Kindle moved independently since the last sync, you'll get 
 
 > **Note:** if you enable sync while a Kindle book is already open, that reading session won't write back on close. Reopen the book once so its opening state can be reconciled first.
 
+### Cross-device sync (Kindle, Boox and other devices)
+
+Read a chapter on your Kindle, pick up a Boox Palma or Boox Go, and continue on the same page. Progress goes through a small sync server that you run yourself (a PC, Raspberry Pi or NAS on your home network is enough).
+
+**1. Start the server** (Python 3.8+, no extra packages):
+
+```sh
+python3 server/kindle_sync_server.py --port 8081 --data ./sync-data
+# or with Docker:
+docker build -t reading-sync server/
+docker run -d -p 8081:8081 -v reading-sync:/data -e KSYNC_ADMIN_PASSWORD=change-me reading-sync
+```
+
+The first start prints a dashboard password if you did not set one. Open `http://<computer-ip>:8081` in a browser and sign in.
+
+**2. Pair each device.** On the dashboard tap **Get a pairing code**. On the device, open **Menu → Tools → KindleOS → Cross-device sync → Pair this device…**, enter the server address and the 6-character code. Repeat for every Kindle or Boox that runs KOReader with this plugin.
+
+That's it. From then on:
+
+- Opening a book (or waking the device) jumps to the furthest place you reached on any device, with a short "Continued from Boox Palma (52%)" note.
+- Closing a book or putting the device to sleep uploads your place.
+- No Wi-Fi? The position is saved and uploaded as soon as Wi-Fi reconnects.
+- If you read on two devices without syncing in between, you are asked where to continue, showing both positions. Going *backwards* (another device is behind) asks first by default.
+- Books match by title and author, so the Kindle's converted copy of a KFX book and the EPUB on your Boox are recognised as the same book. When both devices have the identical file, the position is exact; otherwise it is matched by percentage.
+
+The dashboard shows each book with its progress on every device, the paired devices (with a **Remove** button), and pairing codes. Devices that already use KOReader's built-in **Progress sync** can point it at the same server and sign in as `reader` with the dashboard password, or use **Sign in with user name and password…** in this plugin's menu for any existing KOReader sync server.
+
+> On Boox, install KOReader for Android and copy this plugin into its `plugins` folder. The Kindle-only features stay idle there; cross-device sync works the same. Boox's own NeoReader app cannot be synced.
+
 ### Settings
 
-Menu locations: **Menu → Tools → More tools → Kindle Library**
+Menu location: **Menu → Tools → KindleOS**. Items are grouped into *Cross-device sync*, *Kindle Library*, *Sync with Kindle reader*, *Reading & extras* and *Settings & storage*.
 
 | Setting | Description |
 | ------- | ----------- |
