@@ -21,6 +21,9 @@ end
 --- @return string
 function CloudSyncPolicy.normalize(text)
     local s = lower(text)
+    -- Typographic dashes/quotes (U+2013..U+201D), ellipsis and no-break space:
+    -- "Ender’s Game" from the Kindle store matches "Ender's Game" from an EPUB.
+    s = s:gsub("\226\128[\147-\157\166]", " "):gsub("\194\160", " ")
     s = s:gsub("%b()", " "):gsub("%b[]", " ") -- "(Dune Chronicles #1)", "[Kindle Edition]"
     s = s:gsub("^%s*the%s+", ""):gsub("^%s*a%s+", ""):gsub("^%s*an%s+", "")
     s = s:gsub("[%p%c]", " ")

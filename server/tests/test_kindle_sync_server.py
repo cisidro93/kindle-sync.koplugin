@@ -102,6 +102,13 @@ class TestKosyncCompatibility(ServerTestCase):
         self.assertEqual(status, 403)
         self.assertEqual(body["code"], "invalid_fields")
 
+    def test_bad_base_version_rejected(self):
+        auth = self.pair("dev-a", "Kindle")
+        body = {"document": "x", "progress": "1", "percentage": 0.1, "device": "Kindle", "base_version": "abc"}
+        status, payload = self.jrequest("PUT", "/syncs/progress", body, auth=auth)
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["code"], "invalid_fields")
+
     def test_bad_json_rejected(self):
         auth = self.pair("dev-a", "Kindle")
         status, _, _ = self.request("PUT", "/syncs/progress", b"{not json", auth=auth, raw=True)
@@ -251,6 +258,9 @@ class TestBookKeyParity(unittest.TestCase):
         self.assertEqual(srv.book_key_for(None, None, "My_Book"), "file:my book")
         self.assertIsNone(srv.book_key_for("", None, ""))
         self.assertEqual(srv.book_key_for("Dune", ""), "dune")
+        self.assertEqual(srv.book_key_for("Ender\u2019s Game", "Orson Scott Card"), "ender s game|orson scott card")
+        self.assertEqual(srv.book_key_for("Ender's Game", "Card, Orson Scott"), "ender s game|orson scott card")
+        self.assertEqual(srv.book_key_for("Wait\u00a0\u2014 for it\u2026", None), "wait for it")
         self.assertEqual(srv.book_key_for("Les Misérables [Kindle Edition]", "Hugo; Victor"), "les misérables|hugo")
 
 

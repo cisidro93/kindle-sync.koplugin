@@ -133,6 +133,9 @@ def _check_password(password: str, stored: str) -> bool:
 
 _SPACE = "[ \t\n\v\f\r]"
 _ASCII_PUNCT_OR_CTRL = re.compile(r"[!-/:-@\[-`{-~\x00-\x1f\x7f]")
+# Typographic dashes/quotes (U+2013..U+201D), ellipsis and no-break space, so
+# "Ender’s Game" from the Kindle store matches "Ender's Game" from an EPUB.
+_TYPOGRAPHIC = re.compile("[\u2013-\u201d\u2026\u00a0]")
 
 
 def _ascii_lower(text: str) -> str:
@@ -143,10 +146,10 @@ def normalize_text(text) -> str:
     """Python twin of CloudSyncPolicy.normalize (lua/lib/cloud_sync_policy.lua).
 
     Both sides must produce identical keys, so this mirrors the Lua patterns:
-    ASCII-only lowercase, bracketed parts dropped, one leading article dropped
+    ASCII-only lowercase, typographic quotes/dashes to spaces, bracketed parts dropped, one leading article dropped
     in the order the, a, an, ASCII punctuation/control chars to spaces.
     """
-    s = _ascii_lower(str(text or ""))
+    s = _TYPOGRAPHIC.sub(" ", _ascii_lower(str(text or "")))
     for pattern in (r"\([^()]*\)", r"\[[^\[\]]*\]"):
         previous = None
         while previous != s:
@@ -383,6 +386,11 @@ class Store:
         percentage = min(max(percentage, 0.0), 1.0)
         book_key = _clean(body.get("book_key"), 512)
         base_version = body.get("base_version")
+        if base_version is not None:
+            try:
+                base_version = int(base_version)
+            except (TypeError, ValueError):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_fields", "base_version must be a number.")
         force = bool(body.get("force"))
         now = int(time.time())
         # CrossPoint (Xteink) and other clients send {"metadata": {...}}.
@@ -667,7 +675,10 @@ class SyncHandler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.SEE_OTHER, b"", "text/plain", h)
 
     def _body_bytes(self) -> bytes:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "bad_length", "Invalid Content-Length.")
         if length > MAX_BODY:
             raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "too_large", "Request body too large.")
         return self.rfile.read(length) if length > 0 else b""
@@ -798,6 +809,8 @@ class SyncHandler(BaseHTTPRequestHandler):
                 token = secrets.token_urlsafe(32)
                 self.sessions[token] = time.time() + SESSION_TTL
                 cookie = f"ksync_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
+                if self.headers.get("X-Forwarded-Proto", "").lower() == "https":
+                    cookie += "; Secure"
                 return self._redirect("/", {"Set-Cookie": cookie})
             time.sleep(0.5)
             return self._html(render_login("That password is not right."), 401)

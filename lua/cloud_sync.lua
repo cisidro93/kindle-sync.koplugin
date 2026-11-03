@@ -596,6 +596,8 @@ function CloudSync:onReaderReady(ui)
 end
 
 function CloudSync:onCloseDocument(ui)
+    -- The next book starts its own periodic-upload clock.
+    self._last_periodic_push = nil
     if not self:isActive() or not self:settings().auto_sync then
         return
     end
