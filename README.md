@@ -45,6 +45,8 @@ If both KOReader and Kindle moved independently since the last sync, you'll get 
 
 ### Cross-device sync (Kindle, Boox and other devices)
 
+> **New here?** Follow the step-by-step guide: [Set up cross-device sync](docs/cross-device-sync-setup.md).
+
 Read a chapter on your Kindle, pick up a Boox Palma or Boox Go, and continue on the same page. Progress goes through a small sync server that you run yourself (a PC, Raspberry Pi or NAS on your home network is enough).
 
 **1. Start the server** (Python 3.8+, no extra packages):
