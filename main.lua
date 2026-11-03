@@ -16,6 +16,8 @@ local T = require("ffi/util").template
 local util = require("util")
 
 local CacheManager = require("lua/cache_manager")
+local CloudSync = require("lua/cloud_sync")
+local CloudSyncMenu = require("lua/cloud_sync_menu")
 local FileChooserExt = require("lua/filechooser_ext")
 local HelperClient = require("lua/helper_client")
 local KindleClippingsParser = require("lua/lib/kindle_clippings_parser")
@@ -136,6 +138,7 @@ end
 --- needed by the current KOReader context.
 function KindlePlugin:init()
     self:loadSettings()
+    self.cloud_sync = CloudSync:new(self)
     reading_goal_tracker.plugin = self
     manga_mode.plugin = self
     home_dashboard.plugin = self
@@ -430,6 +433,11 @@ function KindlePlugin:onReaderReady()
     if self.ui and self.ui.document then
         reading_state_sync:verifyOpenedKOReaderPosition(self.ui, self.ui.document.file)
     end
+    -- Cross-device sync runs after the Kindle reader reconciliation above so it
+    -- compares against the position actually shown.
+    if self.cloud_sync and self.ui and self.ui.document then
+        self.cloud_sync:onReaderReady(self.ui)
+    end
 end
 
 local function runPendingCloseSync(pending)
@@ -515,6 +523,11 @@ function KindlePlugin:onCloseDocument()
     if reading_goal_tracker then
         reading_goal_tracker:endSession()
     end
+    -- Upload the final position for other devices while the document is still
+    -- open (the live renderer is the source of truth here).
+    if self.cloud_sync and self.ui and self.ui.document then
+        self.cloud_sync:onCloseDocument(self.ui)
+    end
     if
         not self.settings.sync_reading_state
         or not reading_state_sync:isAutomaticSyncEnabled()
@@ -591,6 +604,9 @@ end
 --- without closing the session, ensuring reading counts toward daily goals/insights
 --- even if the user leaves the book open and puts the device to sleep.
 function KindlePlugin:onSuspend()
+    if self.cloud_sync and self.ui and self.ui.document then
+        self.cloud_sync:onSuspend(self.ui)
+    end
     if
         not self.settings.sync_reading_state
         or not reading_state_sync:isAutomaticSyncEnabled()
@@ -614,6 +630,28 @@ function KindlePlugin:onSuspend()
     })
     if self.settings.trigger_cloud_sync ~= false then
         self:triggerKindleCloudSync()
+    end
+end
+
+--- Device woke up: another device may have moved on while this one slept.
+--- Page turns: occasional background upload for other devices.
+function KindlePlugin:onPageUpdate()
+    if self.cloud_sync and self.ui and self.ui.document then
+        self.cloud_sync:onPageUpdate(self.ui)
+    end
+end
+
+function KindlePlugin:onResume()
+    if self.cloud_sync then
+        self.cloud_sync:onResume(self.ui)
+    end
+end
+
+--- Wi-Fi came up: upload positions saved while offline and finish any pull
+--- that was waiting for the network.
+function KindlePlugin:onNetworkConnected()
+    if self.cloud_sync then
+        self.cloud_sync:onNetworkConnected(self.ui)
     end
 end
 
@@ -1410,27 +1448,57 @@ function KindlePlugin:addToMainMenu(menu_items)
         zlibrary_guard:installHooks()
     end
 
+    if not self.cloud_sync then
+        self.cloud_sync = CloudSync:new(self)
+    end
+
+    -- Grouped so each screen stays short on a 6" e-ink display: what most
+    -- people need (cross-device sync, the library) comes first; maintenance
+    -- and diagnostics come last.
     local sub_item_table = {
-        self:createBrowseLibraryMenuItem(),
-        self:createRefreshLibraryMenuItem(),
-        self:createClearKeysMenuItem(),
-        self:createClearCacheMenuItem(),
-        self:createVirtualLibraryToggleMenuItem(),
-        self:createVirtualLibraryCoverMenuItem(),
-        self:createSyncToggleMenuItem(),
-        self:createManualSyncMenuItem(),
-        self:createSyncBehaviorMenuItem(),
-        self:createSyncCurrentBookMenuItem(),
-        self:createPrepareAllBooksMenuItem(),
-        self:createKindleDashboardMenuItem(),
-        self:createZlibraryGuardMenuItem(),
-        self:createCacheAllCoversMenuItem(),
-        self:createReadingGoalsMenuItem(),
-        self:createWhispersyncStatusMenuItem(),
-        self:createKindleHighlightsMenuItem(),
-        self:createSyncCollectionsMenuItem(),
-        self:createMangaModeMenuItem(),
-        self:createCacheInfoMenuItem(),
+        CloudSyncMenu.build(self, self.cloud_sync),
+        {
+            text = _("Kindle Library"),
+            sub_item_table = {
+                self:createBrowseLibraryMenuItem(),
+                self:createRefreshLibraryMenuItem(),
+                self:createPrepareAllBooksMenuItem(),
+                self:createCacheAllCoversMenuItem(),
+                self:createSyncCollectionsMenuItem(),
+                self:createKindleHighlightsMenuItem(),
+            },
+        },
+        {
+            text = _("Sync with Kindle reader"),
+            help_text = _("Keep KOReader and the built-in Kindle reader on this Kindle at the same position."),
+            sub_item_table = {
+                self:createSyncToggleMenuItem(),
+                self:createSyncCurrentBookMenuItem(),
+                self:createManualSyncMenuItem(),
+                self:createSyncBehaviorMenuItem(),
+            },
+        },
+        {
+            text = _("Reading & extras"),
+            sub_item_table = {
+                self:createKindleDashboardMenuItem(),
+                self:createReadingGoalsMenuItem(),
+                self:createWhispersyncStatusMenuItem(),
+                self:createMangaModeMenuItem(),
+                self:createZlibraryGuardMenuItem(),
+            },
+        },
+        {
+            text = _("Settings & storage"),
+            separator = true,
+            sub_item_table = {
+                self:createVirtualLibraryToggleMenuItem(),
+                self:createVirtualLibraryCoverMenuItem(),
+                self:createCacheInfoMenuItem(),
+                self:createClearKeysMenuItem(),
+                self:createClearCacheMenuItem(),
+            },
+        },
         self:createAboutMenuItem(),
     }
 
