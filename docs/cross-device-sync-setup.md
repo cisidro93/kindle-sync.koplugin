@@ -61,7 +61,7 @@ Skip this if you only want to sync at home.
 
 From now on, use this `https://` address instead of the home IP everywhere below. Only the server needs Tailscale; the Kindle and Boox just use the address.
 
-The server locks a client out for 15 minutes after 10 failed sign-ins or pairing codes, but a long password is still your main protection.
+The server locks a client out for 15 minutes after 5 failed sign-ins or pairing codes, but a long password is still your main protection.
 
 ## Step 3: Pair your Kindle
 
@@ -83,10 +83,11 @@ The server locks a client out for 15 minutes after 10 failed sign-ins or pairing
 
 ## Step 5 (optional): Connect the Xteink X4
 
-1. On the X4: **Settings → CrossPoint Sync**.
-2. **Sync Server URL**: your server address. **Username**: `reader`. **Password**: your dashboard password. Choose **Authenticate**.
-3. Leave **Send Document Metadata** on, so the X4 is matched to the same book on your other devices.
-4. In a book, choose **Sync** from the reader menu.
+1. On the dashboard, under **Xteink X4 (CrossPoint) and other sync apps**, type a name ("X4") and tap **Create device password**. Note the password; it's shown only once.
+2. On the X4, open **Settings → CrossPoint Sync**.
+3. Set **Sync Server URL**: your server address. **Username**: `reader`. **Password**: the device password. Choose **Authenticate**.
+4. Leave **Send Document Metadata** on, so the X4 is matched to the same book on your other devices.
+5. In a book, choose **Sync** from the reader menu.
 
 If the X4 refuses the `https://` address, use the home address and it will sync when you're home.
 
@@ -115,6 +116,7 @@ You can sync by hand any time with **Cross-device sync → Sync this book now**.
 | "This device is no longer paired" | The device was removed on the dashboard. Pair it again with a new code. |
 | "Too many failed sign-in attempts" | Wait 15 minutes. Uploads are kept and sent afterwards. |
 | Can't reach the server | Check the address (include `https://` for Tailscale), that the server window or container is running, and for home addresses that the device is on the same Wi-Fi. |
-| A book doesn't follow between devices | The two copies probably have different titles or authors in their metadata (for example one has a subtitle). Fix the metadata in Calibre, or open the identical file on both devices. |
-| Dashboard shows a device you don't recognise | Tap **Remove** next to it. Devices that sign in with the password (X4, stock KOReader) are only locked out by restarting the server with a new `--admin-password`. |
+| A book doesn't follow between devices | The two copies have different titles or authors in their metadata (for example one has a subtitle). Once both show on the dashboard, use **Same book as… → Link** on one of them. From then on they sync as one book. |
+| Dashboard shows a device you don't recognise | Tap **Remove** next to it. That locks out paired devices and device passwords. Anything signed in with the dashboard password itself is only locked out by restarting the server with a new `--admin-password`, so give each app its own device password. |
+| Want to start a book over everywhere | On the dashboard, tap **Forget this book** on its card. |
 | Moved the server or changed its address | On each device, choose **Pair again with a new code…** with the new address. |

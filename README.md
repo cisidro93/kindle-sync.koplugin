@@ -70,7 +70,7 @@ That's it. From then on:
 - If you read on two devices without syncing in between, you are asked where to continue, showing both positions. Going *backwards* (another device is behind) asks first by default.
 - Books match by title and author, so the Kindle's converted copy of a KFX book and the EPUB on your Boox are recognised as the same book. When both devices have the identical file, the position is exact; otherwise it is matched by percentage.
 
-The dashboard shows each book with its progress on every device, the paired devices (with a **Remove** button), and pairing codes. Devices that already use KOReader's built-in **Progress sync** can point it at the same server and sign in as `reader` with the dashboard password, or use **Sign in with user name and password…** in this plugin's menu for any existing KOReader sync server.
+The dashboard shows each book with its progress on every device, the paired devices (with a **Remove** button), and pairing codes. If two copies of a book did not match (one has a subtitle, or the author is spelled differently), pick **Same book as… → Link** on its card; **Forget this book** clears a book everywhere. Devices that already use KOReader's built-in **Progress sync** can point it at the same server and sign in as `reader` with a **device password** from the dashboard, or use **Sign in with user name and password…** in this plugin's menu for any existing KOReader sync server.
 
 **Syncing away from home (free HTTPS with Tailscale Funnel).** Out of the box the server only answers on your home network, over plain HTTP. Do not port-forward it as is: the password and device keys would travel unencrypted. To sync anywhere without buying a domain:
 
@@ -82,7 +82,7 @@ Only the server computer needs Tailscale; the Kindle and Boox just use the HTTPS
 
 **Xteink X4 (CrossPoint firmware).** CrossPoint has its own sync client that works with this server:
 
-1. On the X4, open **Settings → CrossPoint Sync**. Set **Sync Server URL** to the dashboard address, **Username** to `reader` and **Password** to your dashboard password, then choose **Authenticate**.
+1. On the X4, open **Settings → CrossPoint Sync**. Set **Sync Server URL** to the dashboard address, **Username** to `reader` and **Password** to a device password (dashboard → **Create device password**), then choose **Authenticate**. Removing the X4 on the dashboard locks only it out.
 2. Leave **Send Document Metadata** on. The server uses the title and author it sends to recognise the book you are reading on your Kindle or Boox, even when the files differ.
 3. In a book, choose **Sync** from the reader menu (or put it on a button). With **Smart Sync** the X4 jumps ahead if another device is further along, and otherwise uploads its own place.
 
