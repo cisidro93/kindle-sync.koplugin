@@ -25,6 +25,11 @@ describe("CloudSyncPolicy", function()
             assert.is_nil(Policy.bookKey("", nil, ""))
         end)
 
+        it("matches the server's Python implementation for non-ASCII titles", function()
+            -- Same vector as server/tests TestBookKeyParity.
+            assert.are.equal("les misérables|hugo", Policy.bookKey("Les Misérables [Kindle Edition]", "Hugo; Victor"))
+        end)
+
         it("works without an author", function()
             assert.are.equal("dune", Policy.bookKey("Dune", ""))
         end)

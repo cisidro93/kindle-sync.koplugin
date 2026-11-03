@@ -634,6 +634,13 @@ function KindlePlugin:onSuspend()
 end
 
 --- Device woke up: another device may have moved on while this one slept.
+--- Page turns: occasional background upload for other devices.
+function KindlePlugin:onPageUpdate()
+    if self.cloud_sync and self.ui and self.ui.document then
+        self.cloud_sync:onPageUpdate(self.ui)
+    end
+end
+
 function KindlePlugin:onResume()
     if self.cloud_sync then
         self.cloud_sync:onResume(self.ui)

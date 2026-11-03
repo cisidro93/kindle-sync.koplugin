@@ -63,14 +63,22 @@ The first start prints a dashboard password if you did not set one. Open `http:/
 That's it. From then on:
 
 - Opening a book (or waking the device) jumps to the furthest place you reached on any device, with a short "Continued from Boox Palma (52%)" note.
-- Closing a book or putting the device to sleep uploads your place.
+- Closing a book, putting the device to sleep, or reading for a few minutes uploads your place.
 - No Wi-Fi? The position is saved and uploaded as soon as Wi-Fi reconnects.
 - If you read on two devices without syncing in between, you are asked where to continue, showing both positions. Going *backwards* (another device is behind) asks first by default.
 - Books match by title and author, so the Kindle's converted copy of a KFX book and the EPUB on your Boox are recognised as the same book. When both devices have the identical file, the position is exact; otherwise it is matched by percentage.
 
 The dashboard shows each book with its progress on every device, the paired devices (with a **Remove** button), and pairing codes. Devices that already use KOReader's built-in **Progress sync** can point it at the same server and sign in as `reader` with the dashboard password, or use **Sign in with user name and password…** in this plugin's menu for any existing KOReader sync server.
 
-> On Boox, install KOReader for Android and copy this plugin into its `plugins` folder. The Kindle-only features stay idle there; cross-device sync works the same. Boox's own NeoReader app cannot be synced.
+**Xteink X4 (CrossPoint firmware).** CrossPoint has its own sync client that works with this server:
+
+1. On the X4, open **Settings → CrossPoint Sync**. Set **Sync Server URL** to the dashboard address, **Username** to `reader` and **Password** to your dashboard password, then choose **Authenticate**.
+2. Leave **Send Document Metadata** on. The server uses the title and author it sends to recognise the book you are reading on your Kindle or Boox, even when the files differ.
+3. In a book, choose **Sync** from the reader menu (or put it on a button). With **Smart Sync** the X4 jumps ahead if another device is further along, and otherwise uploads its own place.
+
+The very first sync of a book on the X4 links it to the other devices. If another device is ahead, sync once more to jump there. A device that is new to a book can never pull the shared position backwards. When the X4 and another device have the same EPUB file, positions are exact; otherwise they are matched by percentage.
+
+> On Boox, install KOReader for Android and copy this plugin into its `plugins` folder. The Kindle-only features stay idle there; cross-device sync works the same. Boox's own NeoReader app cannot be synced: it has no plugin system and only syncs with Onyx's cloud.
 
 ### Settings
 

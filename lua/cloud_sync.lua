@@ -605,6 +605,32 @@ function CloudSync:onCloseDocument(ui)
     end
 end
 
+--- While reading, upload at most every few minutes so a device left awake
+--- (or one whose battery dies) still hands over a recent position.
+CloudSync.PERIODIC_PUSH_SECONDS = 300
+
+function CloudSync:onPageUpdate(ui)
+    if not self:isActive() or not self:settings().auto_sync or not ui or not ui.document then
+        return
+    end
+    local now = self.deps.now()
+    if self._last_periodic_push and now - self._last_periodic_push < CloudSync.PERIODIC_PUSH_SECONDS then
+        return
+    end
+    if not self._last_periodic_push then
+        -- First page turn after opening: start the clock, do not upload yet.
+        self._last_periodic_push = now
+        return
+    end
+    self._last_periodic_push = now
+    if self.deps.isOnline() then
+        local ok, err = pcall(self.push, self, ui)
+        if not ok then
+            logger.warn("CloudSync: periodic push failed:", err)
+        end
+    end
+end
+
 function CloudSync:onSuspend(ui)
     if not self:isActive() or not self:settings().auto_sync or not ui or not ui.document then
         return

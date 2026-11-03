@@ -29,6 +29,7 @@ The first start prints a generated dashboard password unless one is given with
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import hmac
 import html
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS progress (
     authors TEXT NOT NULL DEFAULT '',
     timestamp INTEGER NOT NULL,
     version INTEGER NOT NULL,
+    position TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (username, book_key)
 );
 CREATE TABLE IF NOT EXISTS device_progress (
@@ -129,6 +131,52 @@ def _check_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(_hash_password(password, salt), stored)
 
 
+_SPACE = "[ \t\n\v\f\r]"
+_ASCII_PUNCT_OR_CTRL = re.compile(r"[!-/:-@\[-`{-~\x00-\x1f\x7f]")
+
+
+def _ascii_lower(text: str) -> str:
+    return text.translate({c: c + 32 for c in range(65, 91)})
+
+
+def normalize_text(text) -> str:
+    """Python twin of CloudSyncPolicy.normalize (lua/lib/cloud_sync_policy.lua).
+
+    Both sides must produce identical keys, so this mirrors the Lua patterns:
+    ASCII-only lowercase, bracketed parts dropped, one leading article dropped
+    in the order the, a, an, ASCII punctuation/control chars to spaces.
+    """
+    s = _ascii_lower(str(text or ""))
+    for pattern in (r"\([^()]*\)", r"\[[^\[\]]*\]"):
+        previous = None
+        while previous != s:
+            previous, s = s, re.sub(pattern, " ", s)
+    for article in ("the", "a", "an"):
+        s = re.sub(rf"^{_SPACE}*{article}{_SPACE}+", "", s, count=1)
+    s = _ASCII_PUNCT_OR_CTRL.sub(" ", s)
+    s = re.sub(rf"{_SPACE}+", " ", s)
+    return re.sub(rf"^{_SPACE}+|{_SPACE}+$", "", s)
+
+
+def first_author(authors) -> str:
+    match = re.match(r"[^\n;&]+", str(authors or ""))
+    first = match.group(0) if match else ""
+    parts = re.match(rf"^{_SPACE}*([^,]+),{_SPACE}*(.+)$", first)
+    if parts:
+        first = parts.group(2) + " " + parts.group(1)
+    return normalize_text(first)
+
+
+def book_key_for(title, authors, fallback=None) -> str | None:
+    """Python twin of CloudSyncPolicy.bookKey: format-independent book identity."""
+    t = normalize_text(title)
+    if not t:
+        t = normalize_text(re.sub(r"\.[^./]+$", "", str(fallback or "")))
+        return f"file:{t}" if t else None
+    a = first_author(authors)
+    return f"{t}|{a}" if a else t
+
+
 def _clean(value, limit: int = 256) -> str:
     if value is None:
         return ""
@@ -142,12 +190,22 @@ class Store:
         self.path = path
         self.lock = threading.Lock()
         with self.connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")  # readers never wait for a writer
             db.executescript(SCHEMA)
+            columns = {r["name"] for r in db.execute("PRAGMA table_info(progress)")}
+            if "position" not in columns:  # databases created by v1.0.0
+                db.execute("ALTER TABLE progress ADD COLUMN position TEXT NOT NULL DEFAULT ''")
 
-    def connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def connect(self):
+        """Opens a connection, commits on success, and always closes it."""
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
-        return db
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     # -- settings ---------------------------------------------------------
     def get_setting(self, key: str) -> str | None:
@@ -270,12 +328,31 @@ class Store:
         return row["book_key"] if row else document
 
     def get_progress(self, username: str, document: str) -> dict | None:
+        """Looks a book up by file hash or book key.
+
+        When a file hash resolves to progress saved from a *different* file of
+        the same book (e.g. a Kindle-converted EPUB vs. the store EPUB on an
+        Xteink), the XPointer would point into the wrong document. It is
+        dropped so the client positions by percentage instead.
+        """
         with self.connect() as db:
             book_key = self.resolve_book_key(db, username, document)
             row = db.execute("SELECT * FROM progress WHERE username=? AND book_key=?", (username, book_key)).fetchone()
             if not row and document != book_key:
                 row = db.execute("SELECT * FROM progress WHERE username=? AND book_key=?", (username, document)).fetchone()
-            return self._record(row) if row else None
+            if not row:
+                return None
+            record = self._record(row)
+            same_file = record["document"] == document or document == record["book_key"]
+            if row["position"] and same_file:
+                try:
+                    record["position"] = json.loads(row["position"])
+                except ValueError:
+                    pass
+            if not same_file:
+                record["progress"] = ""
+                record["cross_file"] = True
+            return record
 
     @staticmethod
     def _record(row: sqlite3.Row) -> dict:
@@ -308,16 +385,62 @@ class Store:
         base_version = body.get("base_version")
         force = bool(body.get("force"))
         now = int(time.time())
+        # CrossPoint (Xteink) and other clients send {"metadata": {...}}.
+        metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+        title = _clean(body.get("title") or metadata.get("title"))
+        authors = _clean(body.get("authors") or metadata.get("authors"))
+        position = body.get("position")
+        position_json = json.dumps(position)[:1024] if isinstance(position, dict) else ""
 
         with self.lock, self.connect() as db:
+            if not book_key:
+                alias = db.execute(
+                    "SELECT book_key FROM aliases WHERE username=? AND document=?", (username, document)
+                ).fetchone()
+                if alias:
+                    book_key = alias["book_key"]
+                elif title:
+                    # Link this file to the same book on other devices by title/author.
+                    book_key = book_key_for(title, authors) or ""
             if book_key:
                 db.execute(
                     "INSERT OR REPLACE INTO aliases(username, document, book_key) VALUES(?,?,?)",
                     (username, document, book_key),
                 )
             else:
-                book_key = self.resolve_book_key(db, username, document)
+                book_key = document
             current = db.execute("SELECT * FROM progress WHERE username=? AND book_key=?", (username, book_key)).fetchone()
+            seen_here = db.execute(
+                "SELECT 1 FROM device_progress WHERE username=? AND book_key=? AND device_id=?",
+                (username, book_key, device_id or device),
+            ).fetchone()
+            db.execute(
+                "INSERT OR REPLACE INTO device_progress(username, book_key, device_id, device, percentage, timestamp) "
+                "VALUES(?,?,?,?,?,?)",
+                (username, book_key, device_id or device, device, percentage, now),
+            )
+            if (
+                current is not None
+                and base_version is None
+                and not force
+                and not seen_here
+                and current["device_id"] != device_id
+                and percentage < float(current["percentage"]) - 0.001
+            ):
+                # A device syncing this book for the first time, without a
+                # base version (plain KOSync / CrossPoint), must not drag the
+                # shared position back. Keep it as this device's progress
+                # only; its next fetch returns the further position.
+                result = {
+                    "document": document,
+                    "book_key": book_key,
+                    "timestamp": int(current["timestamp"]),
+                    "version": int(current["version"]),
+                    "kept": "remote",
+                }
+                kept_remote = True
+            else:
+                kept_remote = False
             if (
                 current is not None
                 and base_version is not None
@@ -332,21 +455,19 @@ class Store:
                     "Another device has newer progress for this book.",
                     {"current": self._record(current)},
                 )
-            version = (int(current["version"]) if current else 0) + 1
-            title = _clean(body.get("title")) or (current["title"] if current else "")
-            authors = _clean(body.get("authors")) or (current["authors"] if current else "")
-            db.execute(
-                "INSERT OR REPLACE INTO progress(username, book_key, document, progress, percentage, device, device_id, "
-                "title, authors, timestamp, version) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (username, book_key, document, progress, percentage, device, device_id, title, authors, now, version),
-            )
-            db.execute(
-                "INSERT OR REPLACE INTO device_progress(username, book_key, device_id, device, percentage, timestamp) "
-                "VALUES(?,?,?,?,?,?)",
-                (username, book_key, device_id or device, device, percentage, now),
-            )
+            if not kept_remote:
+                version = (int(current["version"]) if current else 0) + 1
+                title = title or (current["title"] if current else "")
+                authors = authors or (current["authors"] if current else "")
+                db.execute(
+                    "INSERT OR REPLACE INTO progress(username, book_key, document, progress, percentage, device, "
+                    "device_id, title, authors, timestamp, version, position) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (username, book_key, document, progress, percentage, device, device_id, title, authors, now, version,
+                     position_json),
+                )
+                result = {"document": document, "book_key": book_key, "timestamp": now, "version": version}
         self.touch_device(username, device_id, name=device)
-        return {"document": document, "book_key": book_key, "timestamp": now, "version": version}
+        return result
 
     def list_books(self, username: str) -> list[dict]:
         with self.connect() as db:
@@ -488,8 +609,21 @@ def render_dashboard(store: Store, csrf: str, server_url: str) -> bytes:
         f"<li>Enter the server address <strong>{e(server_url)}</strong> and the pairing code.</li></ol>"
         f"<form method=post action=/pair><input type=hidden name=csrf value={e(csrf)}>"
         f"<button type=submit>{'New pairing code' if codes else 'Get a pairing code'}</button></form>"
-        "<p class='muted small'>Using KOReader's built-in Progress sync instead? Point its custom sync server at this "
-        f"address and log in as <strong>{OWNER}</strong> with your dashboard password.</p></div>"
+        "</div>"
+    )
+    parts.append(
+        "<div class=card><strong>Xteink X4 (CrossPoint) and other sync apps</strong>"
+        "<ol><li>On the X4, open <strong>Settings → CrossPoint Sync</strong>.</li>"
+        f"<li>Set <strong>Sync Server URL</strong> to <strong>{e(server_url)}</strong>, "
+        f"<strong>Username</strong> to <strong>{OWNER}</strong> and <strong>Password</strong> to your dashboard password, "
+        "then choose <strong>Authenticate</strong>.</li>"
+        "<li>Keep <strong>Send Document Metadata</strong> on so the X4 is matched to the same book on your Kindle and Boox, "
+        "even when the files differ.</li>"
+        "<li>In a book, run <strong>Sync</strong> from the reader menu. With <strong>Smart Sync</strong> it jumps ahead or "
+        "uploads by itself.</li></ol>"
+        "<p class='muted small'>KOReader's built-in Progress sync works the same way: custom server, this address, "
+        f"user <strong>{OWNER}</strong>, dashboard password. These devices sign in with the password, so to lock one out, "
+        "restart the server with a new <code>--admin-password</code>.</p></div>"
     )
     parts.append(f"<p class='muted small'>Account name: <strong>{OWNER}</strong> · Server v{SERVER_VERSION}</p>")
     return _page("Reading Sync", "".join(parts))
@@ -611,6 +745,10 @@ class SyncHandler(BaseHTTPRequestHandler):
                 user = self._auth_user()
                 document = unquote(path[len("/syncs/progress/"):])
                 record = self.store.get_progress(user, document)
+                if record is None and "position_kinds" in urlparse(self.path).query:
+                    # CrossPoint treats 404 as "no progress yet" (and uploads);
+                    # stock KOReader expects the reference server's empty object.
+                    raise ApiError(HTTPStatus.NOT_FOUND, "not_found", "No progress for this document yet.")
                 return self._json(200, record or {})
             if path == "/v1/pair" and method == "POST":
                 return self._pair()

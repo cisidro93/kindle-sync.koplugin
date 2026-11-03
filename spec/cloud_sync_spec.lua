@@ -253,6 +253,21 @@ describe("CloudSync", function()
         assert.is_truthy(kindle:statusText():match("Not set up"))
     end)
 
+    it("uploads in the background every few minutes while reading", function()
+        local kindle = paired("Kindle", "kindle")
+        local clock = 0
+        kindle.deps.now = function()
+            return clock
+        end
+        kindle:onPageUpdate(newUI(0.10)) -- starts the clock
+        clock = 60
+        kindle:onPageUpdate(newUI(0.11)) -- too soon
+        assert.are.equal(0, #server.calls)
+        clock = 400
+        kindle:onPageUpdate(newUI(0.12))
+        assert.are.equal(0.12, server.records["dune|frank herbert"].percentage)
+    end)
+
     it("does nothing until paired", function()
         local cs = CloudSync:new(plugin, deps)
         assert.is_false(cs:pull(newUI(0.1)))

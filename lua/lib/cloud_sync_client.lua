@@ -10,8 +10,9 @@
 local CloudSyncClient = {}
 CloudSyncClient.__index = CloudSyncClient
 
-local CONNECT_TIMEOUT = 5
-local TOTAL_TIMEOUT = 10
+-- Short timeouts: syncing must never make closing a book feel slow.
+local CONNECT_TIMEOUT = 3
+local TOTAL_TIMEOUT = 8
 
 local function urlEncode(text)
     return (tostring(text):gsub("[^%w%-%._~]", function(c)

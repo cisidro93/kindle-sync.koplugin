@@ -241,5 +241,93 @@ class TestDashboard(ServerTestCase):
         self.assertIn(b"&lt;script&gt;", body)
 
 
+class TestBookKeyParity(unittest.TestCase):
+    """Must match spec/cloud_sync_policy_spec.lua so Lua and Python agree."""
+
+    def test_matches_lua_vectors(self):
+        self.assertEqual(srv.book_key_for("Dune (Dune Chronicles, Book 1)", "Herbert, Frank"), "dune|frank herbert")
+        self.assertEqual(srv.book_key_for("Dune", "Frank Herbert\nBrian Herbert"), "dune|frank herbert")
+        self.assertEqual(srv.book_key_for("The Hobbit", "J.R.R. Tolkien"), srv.book_key_for("hobbit", "J R R Tolkien"))
+        self.assertEqual(srv.book_key_for(None, None, "My_Book"), "file:my book")
+        self.assertIsNone(srv.book_key_for("", None, ""))
+        self.assertEqual(srv.book_key_for("Dune", ""), "dune")
+        self.assertEqual(srv.book_key_for("Les Misérables [Kindle Edition]", "Hugo; Victor"), "les misérables|hugo")
+
+
+class TestCrossPoint(ServerTestCase):
+    """Flows as the Xteink X4 CrossPoint firmware performs them (lib/KOReaderSync)."""
+
+    MD5_PW = hashlib.md5(b"secret-pw").hexdigest()
+
+    def crosspoint(self, method, path, body=None):
+        headers = {"Authorization": "Basic cmVhZGVyOnNlY3JldC1wdw=="}
+        return self.jrequest(method, path, body, auth=("reader", self.MD5_PW), headers=headers)
+
+    def kindle_push(self, percentage):
+        kindle = self.pair("kindle", "Kindle")
+        self.jrequest(
+            "PUT", "/syncs/progress",
+            {"document": "kindle-hash", "book_key": "dune|frank herbert", "progress": "/body/DocFragment[9]/p[4]",
+             "percentage": percentage, "device": "Kindle", "device_id": "kindle", "title": "Dune",
+             "authors": "Frank Herbert"},
+            auth=kindle,
+        )
+
+    def test_unknown_document_is_404_for_crosspoint(self):
+        status, body = self.crosspoint("GET", "/syncs/progress/x4hash?position_kinds=locator,percentage")
+        self.assertEqual(status, 404)
+
+    def test_metadata_links_x4_to_kindle_and_never_drags_progress_back(self):
+        self.kindle_push(0.40)
+        # First sync on the X4: unknown hash, Smart Sync uploads its 5%.
+        status, _ = self.crosspoint(
+            "PUT", "/syncs/progress",
+            {"document": "x4hash", "progress": "/body/DocFragment[1]/p[2]", "percentage": 0.05,
+             "device": "CrossPoint", "device_id": "x4",
+             "metadata": {"filename": "Dune.epub", "title": "Dune (Dune 1)", "authors": "Frank Herbert"},
+             "position": {"pctQ": 500, "spine": 1, "page": 2, "pages": 9}},
+        )
+        self.assertEqual(status, 200)
+        # The Kindle's 40% stays the shared position.
+        status, record = self.crosspoint("GET", "/syncs/progress/x4hash?position_kinds=locator,percentage")
+        self.assertEqual(status, 200)
+        self.assertAlmostEqual(record["percentage"], 0.40)
+        # Different file: no XPointer into the wrong document, so it goes by percentage.
+        self.assertEqual(record["progress"], "")
+        self.assertNotIn("position", record)
+
+    def test_x4_ahead_moves_everyone_forward(self):
+        self.kindle_push(0.40)
+        status, _ = self.crosspoint(
+            "PUT", "/syncs/progress",
+            {"document": "x4hash", "progress": "/body/DocFragment[20]/p[1]", "percentage": 0.55,
+             "device": "CrossPoint", "device_id": "x4", "metadata": {"title": "Dune", "authors": "Frank Herbert"}},
+        )
+        self.assertEqual(status, 200)
+        status, record = self.jrequest("GET", "/syncs/progress/dune%7Cfrank%20herbert", auth=("reader", self.MD5_PW))
+        self.assertAlmostEqual(record["percentage"], 0.55)
+        self.assertEqual(record["device"], "CrossPoint")
+
+    def test_same_file_keeps_exact_position(self):
+        status, _ = self.crosspoint(
+            "PUT", "/syncs/progress",
+            {"document": "samehash", "progress": "/body/DocFragment[3]/p[7]", "percentage": 0.2,
+             "device": "CrossPoint", "device_id": "x4", "position": {"pctQ": 2000, "spine": 2, "page": 3, "pages": 10}},
+        )
+        self.assertEqual(status, 200)
+        status, record = self.crosspoint("GET", "/syncs/progress/samehash?position_kinds=locator,percentage")
+        self.assertEqual(record["progress"], "/body/DocFragment[3]/p[7]")
+        self.assertEqual(record["position"]["spine"], 2)
+
+    def test_later_syncs_from_same_device_can_go_back(self):
+        self.kindle_push(0.40)
+        body = {"document": "x4hash", "progress": "/p", "device": "CrossPoint", "device_id": "x4",
+                "metadata": {"title": "Dune", "authors": "Frank Herbert"}}
+        self.crosspoint("PUT", "/syncs/progress", dict(body, percentage=0.05))  # first sync: kept remote
+        self.crosspoint("PUT", "/syncs/progress", dict(body, percentage=0.10))  # deliberate re-read later
+        status, record = self.crosspoint("GET", "/syncs/progress/x4hash")
+        self.assertAlmostEqual(record["percentage"], 0.10)
+
+
 if __name__ == "__main__":
     unittest.main()
