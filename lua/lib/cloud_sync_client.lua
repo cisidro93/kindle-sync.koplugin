@@ -150,6 +150,9 @@ function CloudSyncClient:request(method, path, payload, authenticated)
         return false, { kind = "auth", status = status, message = message or "This device is no longer paired. Pair it again." }
     elseif status == 409 then
         return false, { kind = "conflict", status = status, message = message or "Another device moved on.", current = data and data.current }
+    elseif status == 429 then
+        -- Locked out after failed sign-ins: retry later, like being offline.
+        return false, { kind = "network", status = status, message = message or "The sync server is busy. Try again later." }
     elseif status == 404 and data and data.code == "pair_code_invalid" then
         return false, { kind = "pair", status = status, message = message }
     end

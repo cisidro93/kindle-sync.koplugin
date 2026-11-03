@@ -82,6 +82,19 @@ describe("CloudSyncClient", function()
         assert.are.equal(0.7, err.current.percentage)
     end)
 
+    it("treats a sign-in lockout (429) like being offline so uploads are queued", function()
+        local c = Client:new({
+            server_url = "h",
+            username = "u",
+            userkey = "k",
+            transport = fakeTransport(429, json.encode({ code = "too_many_attempts", message = "Too many" }), {}),
+        })
+        local ok, err = c:updateProgress({ document = "d" })
+        assert.is_false(ok)
+        assert.are.equal("network", err.kind)
+        assert.are.equal("Too many", err.message)
+    end)
+
     it("refuses to call the server before it is configured", function()
         local ok, err = Client:new({}):getProgress("x")
         assert.is_false(ok)

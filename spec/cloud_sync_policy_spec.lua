@@ -30,6 +30,13 @@ describe("CloudSyncPolicy", function()
             assert.are.equal("les misérables|hugo", Policy.bookKey("Les Misérables [Kindle Edition]", "Hugo; Victor"))
         end)
 
+        it("treats typographic quotes and dashes like plain punctuation", function()
+            -- Same vector as server/tests TestBookKeyParity.
+            assert.are.equal("ender s game|orson scott card", Policy.bookKey("Ender\226\128\153s Game", "Orson Scott Card"))
+            assert.are.equal(Policy.bookKey("Ender's Game", "Card, Orson Scott"), Policy.bookKey("Ender\226\128\153s Game", "Orson Scott Card"))
+            assert.are.equal("wait for it", Policy.bookKey("Wait\194\160\226\128\148 for it\226\128\166", nil))
+        end)
+
         it("works without an author", function()
             assert.are.equal("dune", Policy.bookKey("Dune", ""))
         end)

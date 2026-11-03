@@ -102,6 +102,13 @@ class TestKosyncCompatibility(ServerTestCase):
         self.assertEqual(status, 403)
         self.assertEqual(body["code"], "invalid_fields")
 
+    def test_bad_base_version_rejected(self):
+        auth = self.pair("dev-a", "Kindle")
+        body = {"document": "x", "progress": "1", "percentage": 0.1, "device": "Kindle", "base_version": "abc"}
+        status, payload = self.jrequest("PUT", "/syncs/progress", body, auth=auth)
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["code"], "invalid_fields")
+
     def test_bad_json_rejected(self):
         auth = self.pair("dev-a", "Kindle")
         status, _, _ = self.request("PUT", "/syncs/progress", b"{not json", auth=auth, raw=True)
@@ -251,6 +258,9 @@ class TestBookKeyParity(unittest.TestCase):
         self.assertEqual(srv.book_key_for(None, None, "My_Book"), "file:my book")
         self.assertIsNone(srv.book_key_for("", None, ""))
         self.assertEqual(srv.book_key_for("Dune", ""), "dune")
+        self.assertEqual(srv.book_key_for("Ender\u2019s Game", "Orson Scott Card"), "ender s game|orson scott card")
+        self.assertEqual(srv.book_key_for("Ender's Game", "Card, Orson Scott"), "ender s game|orson scott card")
+        self.assertEqual(srv.book_key_for("Wait\u00a0\u2014 for it\u2026", None), "wait for it")
         self.assertEqual(srv.book_key_for("Les Misérables [Kindle Edition]", "Hugo; Victor"), "les misérables|hugo")
 
 
@@ -331,3 +341,39 @@ class TestCrossPoint(ServerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThrottle(ServerTestCase):
+    def test_wrong_keys_lock_the_client_out(self):
+        auth = self.pair("dev", "Kindle")
+        for _ in range(srv.MAX_FAILURES):
+            self.assertEqual(self.jrequest("GET", "/users/auth", auth=(srv.OWNER, "wrong"))[0], 401)
+        status, body = self.jrequest("GET", "/users/auth", auth=auth)
+        self.assertEqual(status, 429)
+        self.assertEqual(body["code"], "too_many_attempts")
+
+    def test_pair_code_guessing_is_throttled(self):
+        for _ in range(srv.MAX_FAILURES):
+            self.assertEqual(self.jrequest("POST", "/v1/pair", {"code": "ZZZZZZ", "device_id": "x"})[0], 404)
+        code, _ = self.store.create_pair_code(srv.OWNER)
+        self.assertEqual(self.jrequest("POST", "/v1/pair", {"code": code, "device_id": "x"})[0], 429)
+
+    def test_dashboard_login_is_throttled(self):
+        for _ in range(srv.MAX_FAILURES):
+            self.httpd.RequestHandlerClass.throttle.fail("127.0.0.1")
+        status, body, _ = self.request("POST", "/login", b"password=secret-pw", raw=True)
+        self.assertEqual(status, 429)
+        self.assertIn(b"Too many failed attempts", body)
+
+    def test_forwarded_client_is_counted_separately(self):
+        auth = self.pair("dev", "Kindle")
+        attacker = {"X-Forwarded-For": "203.0.113.9"}
+        for _ in range(srv.MAX_FAILURES):
+            self.request("GET", "/users/auth", auth=(srv.OWNER, "wrong"), headers=attacker)
+        self.assertEqual(self.jrequest("GET", "/users/auth", auth=(srv.OWNER, "wrong"), headers=attacker)[0], 429)
+        self.assertEqual(self.jrequest("GET", "/users/auth", auth=auth)[0], 200)
+
+    def test_successes_are_not_counted(self):
+        auth = self.pair("dev", "Kindle")
+        for _ in range(srv.MAX_FAILURES + 2):
+            self.assertEqual(self.jrequest("GET", "/users/auth", auth=auth)[0], 200)
