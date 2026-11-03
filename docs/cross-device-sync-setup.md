@@ -115,8 +115,23 @@ You can sync by hand any time with **Cross-device sync → Sync this book now**.
 | "That pairing code is wrong or has expired" | Codes last 15 minutes and work once. Get a new one on the dashboard. |
 | "This device is no longer paired" | The device was removed on the dashboard. Pair it again with a new code. |
 | "Too many failed sign-in attempts" | Wait 15 minutes. Uploads are kept and sent afterwards. |
-| Can't reach the server | Check the address (include `https://` for Tailscale), that the server window or container is running, and for home addresses that the device is on the same Wi-Fi. |
+| Can't reach the server | Work through **Can't connect at home** below. |
 | A book doesn't follow between devices | The two copies have different titles or authors in their metadata (for example one has a subtitle). Once both show on the dashboard, use **Same book as… → Link** on one of them. From then on they sync as one book. |
 | Dashboard shows a device you don't recognise | Tap **Remove** next to it. That locks out paired devices and device passwords. Anything signed in with the dashboard password itself is only locked out by restarting the server with a new `--admin-password`, so give each app its own device password. |
 | Want to start a book over everywhere | On the dashboard, tap **Forget this book** on its card. |
 | Moved the server or changed its address | On each device, choose **Pair again with a new code…** with the new address. |
+
+### Can't connect at home
+
+Go in order; stop at the first step that fails.
+
+1. **On the server computer**, open `http://localhost:8081` in a browser. No sign-in page means the server isn't running: check the terminal window (or `docker ps`) for errors.
+2. **Use the address the server prints** ("On your Kindle, Boox or phone use http://…"). `0.0.0.0` is not an address you can type on a device. Type it with `:8081` at the end, for example `192.168.1.19:8081`. The plugin adds `http://` for you.
+3. **On a phone on the same Wi-Fi**, open that address in the browser. If step 1 worked but this doesn't, the computer's firewall is blocking it:
+   - **Windows:** when Windows asks "Allow Python to communicate on these networks?", tick **Private networks** and allow. If you missed it: Settings → Network & internet → Wi-Fi → your network → set **Network profile type** to **Private**, then Windows Security → Firewall & network protection → **Allow an app through firewall** → tick Python for **Private**. Or, in an administrator PowerShell: `New-NetFirewallRule -DisplayName "Reading Sync" -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow -Profile Private`
+   - **Mac:** System Settings → Network → Firewall → Options → allow incoming connections for Python.
+   - **Linux:** `sudo ufw allow 8081/tcp` (if ufw is on).
+4. **Same network:** the e-reader and the computer must be on the same Wi-Fi, not a **guest** network and not a phone hotspot. Some mesh/ISP routers block devices from seeing each other ("AP/client isolation"); turn that off in the router app.
+5. **Address changed?** Home IPs can change after a router restart. If the printed address differs from the one you paired with, pair again. A **DHCP reservation** in your router keeps it fixed.
+6. **Phone works but the e-reader doesn't:** check the e-reader's Wi-Fi is on and connected (KOReader: top menu → network icon → Wi-Fi), then try **Pair this device** again.
+
