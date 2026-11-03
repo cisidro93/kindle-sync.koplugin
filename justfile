@@ -132,6 +132,7 @@ test-python:
 [private]
 _test-python:
     cd /opt/plugin && python3 -m unittest discover -s python/tests -p 'test_*.py' -v
+    cd /opt/plugin && python3 -m unittest discover -s server/tests -p 'test_*.py' -v
 
 # Build and execute the ARM DRM hook matrix against the two OpenSSL
 # generations shipped across supported Kindle firmware. Hermetic: QEMU
