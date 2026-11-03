@@ -126,8 +126,9 @@ You can sync by hand any time with **Cross-device sync → Sync this book now**.
 Go in order; stop at the first step that fails.
 
 1. **On the server computer**, open `http://localhost:8081` in a browser. No sign-in page means the server isn't running: check the terminal window (or `docker ps`) for errors.
+   On Windows, clicking inside the server's terminal window can freeze it (the title starts with **Select**) and every device then sees "not responding". Press **Esc** in that window to resume it.
 2. **Use the address the server prints** ("On your Kindle, Boox or phone use http://…"). `0.0.0.0` is not an address you can type on a device. Type it with `:8081` at the end, for example `192.168.1.19:8081`. The plugin adds `http://` for you.
-3. **On a phone on the same Wi-Fi**, open that address in the browser. If step 1 worked but this doesn't, the computer's firewall is blocking it:
+3. **On a phone on the same Wi-Fi**, open that address in the browser. If step 1 worked but this hangs or says "not responding", the computer's firewall is silently blocking it:
    - **Windows:** when Windows asks "Allow Python to communicate on these networks?", tick **Private networks** and allow. If you missed it: Settings → Network & internet → Wi-Fi → your network → set **Network profile type** to **Private**, then Windows Security → Firewall & network protection → **Allow an app through firewall** → tick Python for **Private**. Or, in an administrator PowerShell: `New-NetFirewallRule -DisplayName "Reading Sync" -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow -Profile Private`
    - **Mac:** System Settings → Network → Firewall → Options → allow incoming connections for Python.
    - **Linux:** `sudo ufw allow 8081/tcp` (if ufw is on).
